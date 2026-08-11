@@ -1,100 +1,91 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import plotly.express as px
 
-from vibration_analyzer import calculate_metrics, perform_fft, evaluate_status, generate_site_sample_data
+# 1. 페이지 설정
+st.set_page_config(page_title="부산환경공단 회전기기 진동 관리", layout="wide")
 
-st.set_page_config(page_title="사업소별 진동 측정 데이터 분석", layout="wide")
-
-st.title("🏭 사업소별 진동 측정 데이터 분석 대시보드")
-st.markdown("---")
-
-# 사이드바 설정
-st.sidebar.header("⚙️ 설정 및 사업소 선택")
-data_mode = st.sidebar.radio("데이터 불러오기 방식", ["시뮬레이션 (사업소 멀티 샘플)", "CSV 파일 직접 업로드"])
-
-sampling_rate = st.sidebar.number_input("샘플링 주파수 (Hz)", value=1000, step=100)
-
-site_data_dict = {}
-
-if data_mode == "시뮬레이션 (사업소 멀티 샘플)":
-    # 사업소별 샘플 데이터 자동 생성
-    site_data_dict = generate_site_sample_data(sampling_rate)
-    selected_site = st.sidebar.selectbox("📍 조회할 사업소 선택", list(site_data_dict.keys()))
-    df_selected = site_data_dict[selected_site]
-    signal_col = "Vibration"
-
-else:
-    # CSV 파일 직접 업로드 (사업소 구분 컬럼이 있거나, 사업소명을 직접 입력)
-    uploaded_file = st.sidebar.file_uploader("사업소 진동 데이터 CSV 업로드", type=["csv"])
-    selected_site = st.sidebar.text_input("사업소/설비명 입력", value="사업소 A")
+# 2. 사이드바 구성
+with st.sidebar:
+    st.title("📌 메뉴 (Navigation)")
     
-    if uploaded_file is not None:
-        df_selected = pd.read_csv(uploaded_file)
-        signal_col = st.sidebar.selectbox("진동 데이터 컬럼 선택", df_selected.columns)
-    else:
-        st.info("CSV 파일을 업로드해 주세요.")
-        st.stop()
-
-# --- 1. 전체 사업소 요약 현황판 (시뮬레이션 모드일 때) ---
-if data_mode == "시뮬레이션 (사업소 멀티 샘플)":
-    st.subheader("📊 사업소별 전체 상태 현황")
-    summary_list = []
-    
-    for site_name, s_df in site_data_dict.items():
-        m = calculate_metrics(s_df["Vibration"].values)
-        st_text, _ = evaluate_status(m["RMS"])
-        summary_list.append({
-            "사업소명": site_name,
-            "RMS (mm/s)": m["RMS"],
-            "Peak (mm/s)": m["Peak"],
-            "Crest Factor": m["Crest_Factor"],
-            "상태": st_text
-        })
-    
-    summary_df = pd.DataFrame(summary_list)
-    
-    # 사업소 요약 메트릭 카드 배치
-    cols = st.columns(len(site_data_dict))
-    for idx, row in summary_df.iterrows():
-        cols[idx].metric(label=row["사업소명"], value=f"{row['RMS (mm/s)']} mm/s", delta=row["상태"])
+    # 구분 선택
+    menu_type = st.radio(
+        "구분 선택",
+        ["🏢 사업소별 설비 관리", "📏 진동 측정 기준 (ISO 10816)"]
+    )
     
     st.markdown("---")
+    
+    # 사업소 선택 드롭다운
+    site_list = ["에너지사업소", "생곡사업소", "명지사업소", "해운대사업소", "남부사업소", "수영사업소"]
+    selected_site = st.selectbox("🏢 사업소 선택", site_list)
+    
+    st.markdown("---")
+    
+    # 사업소 데이터 파일 업로드 (사이드바에만 위치)
+    st.subheader("📂 사업소 데이터 업로드")
+    uploaded_file = st.file_uploader(f"[{selected_site}] 측정 데이터 파일(CSV/Excel) 첨부", type=["csv", "xlsx"])
 
-# --- 2. 선택한 사업소 상세 분석 ---
-st.subheader(f"🔍 [{selected_site}] 상세 진동 분석")
+# 3. 메인 화면 구성
+if menu_type == "🏢 사업소별 설비 관리":
+    # 선택된 사업소 표시
+    st.info(f"🏢 현재 선택된 사업소: **{selected_site}**")
+    
+    st.title(f"📜 [{selected_site}] 설비별 진동 점검 이력 및 현황")
+    st.caption("부산환경공단 소속 회전기기 진동 상태 측정 데이터 관리 시스템")
+    
+    # 데이터 로드 (업로드된 파일이 있으면 사용, 없으면 기본/예시 데이터 사용)
+    if uploaded_file is not None:
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+            st.success("데이터 파일이 성공적으로 로드되었습니다.")
+        except Exception as e:
+            st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
+            df = pd.DataFrame()
+    else:
+        # 예시 mock 데이터
+        data = {
+            "측정일자": ["2026-04-02", "2026-04-02", "2026-04-01", "2026-03-28"],
+            "사업소명": [selected_site, selected_site, selected_site, selected_site],
+            "설비명": ["집단에너지 FD Fan #1", "집단에너지 FD Fan #1", "보일러 급수펌프 #1", "1차 냉각수펌프 #2"],
+            "전동기(kW)": [310, 310, 95, 11],
+            "측정위치": ["1(전동기) X", "1(전동기) Y", "2(펌프) Z", "1(전동기) X"],
+            "속도(mm/s)": [12.3, 2.8, 4.8, 1.1],
+            "판정": ["D (즉시점검)", "B (양호)", "C (보수필요)", "A (양호)"],
+            "조치사항": ["베어링 수선 정비", "정상운전", "구리스 보충 및 트렌드 관찰", "정상운전"]
+        }
+        df = pd.DataFrame(data)
+    
+    # 사업소 데이터 필터링 (데이터프레임에 '사업소명' 컬럼이 있는 경우)
+    if "사업소명" in df.columns:
+        filtered_df = df[df["사업소명"] == selected_site]
+    else:
+        filtered_df = df
 
-signal_data = df_selected[signal_col].values
-metrics = calculate_metrics(signal_data)
-status_text, status_type = evaluate_status(metrics["RMS"])
-fft_df = perform_fft(signal_data, sampling_rate)
+    # 메인 상단 요약 지표 (Metric Cards)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("📊 전체 설비 데이터", f"{len(filtered_df)} 건")
+    
+    if "판정" in filtered_df.columns:
+        good_cnt = len(filtered_df[filtered_df["판정"].str.contains("A|B", na=False)])
+        warning_cnt = len(filtered_df[filtered_df["판정"].str.contains("C", na=False)])
+        danger_cnt = len(filtered_df[filtered_df["판정"].str.contains("D", na=False)])
+    else:
+        good_cnt, warning_cnt, danger_cnt = 0, 0, 0
 
-# 상세 지표 표출
-m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-m_col1.metric("RMS (실효값)", f"{metrics['RMS']} mm/s")
-m_col2.metric("Peak (최대값)", f"{metrics['Peak']} mm/s")
-m_col3.metric("Crest Factor", f"{metrics['Crest_Factor']}")
+    col2.metric("✅ 양호 (A / B)", f"{good_cnt} 건")
+    col3.metric("⚠️ 보수 필요 (C)", f"{warning_cnt} 건")
+    col4.metric("🚨 즉시 점검 (D)", f"{danger_cnt} 건")
+    
+    st.markdown("---")
+    
+    # 상세 데이터 테이블
+    st.subheader("📋 상세 점검 이력")
+    st.dataframe(filtered_df, use_container_width=True)
 
-if status_type == "success":
-    m_col4.success(status_text)
-elif status_type == "warning":
-    m_col4.warning(status_text)
-else:
-    m_col4.error(status_text)
-
-# 차트 탭
-tab1, tab2, tab3 = st.tabs(["📈 시계열 파형", "🌊 FFT 주파수 스펙트럼", "📋 원본 데이터"])
-
-with tab1:
-    fig_time = px.line(df_selected, y=signal_col, title=f"{selected_site} - Time Domain Signal")
-    fig_time.update_traces(line_color="#1f77b4")
-    st.plotly_chart(fig_time, use_container_width=True)
-
-with tab2:
-    fig_fft = px.line(fft_df, x="Frequency_Hz", y="Amplitude", title=f"{selected_site} - FFT Spectrum")
-    fig_fft.update_traces(line_color="#ff7f0e")
-    st.plotly_chart(fig_fft, use_container_width=True)
-
-with tab3:
-    st.dataframe(df_selected, use_container_width=True)
+elif menu_type == "📏 진동 측정 기준 (ISO 10816)":
+    st.title("📏 ISO 10816 회전기기 진동 평가 기준")
+    # ISO 10816 안내 표 및 기준 내용 출력
