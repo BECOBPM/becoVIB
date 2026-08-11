@@ -25,30 +25,35 @@ DEFAULT_EXCEL_FILE = "설비점검 및 정비 관리대장(에너지사업소).x
 if "site_data_store" not in st.session_state:
     st.session_state["site_data_store"] = {}
 
-# 4. 엑셀 데이터 정제 함수 (상단 제목 및 빈 행 자동 제거)
+# 4. 엑셀 데이터 정제 함수 (float 타잎 에러 방지 및 헤더 자동 정리)
 def clean_excel_data(df):
     if df is None or df.empty:
         return pd.DataFrame()
     
-    # '설비명' 단어가 포함된 실제 헤더 행 위치 찾기
+    # 1) '설비명' 단어가 포함된 실제 헤더 행 위치 찾기 (모든 셀을 str로 안전하게 변환)
     header_idx = None
-    for idx in range(min(10, len(df))):
-        row_vals = df.iloc[idx].astype(str).values
-        if any("설비명" in val for val in row_vals):
+    for idx in range(min(15, len(df))):
+        row_str_list = [str(val) for val in df.iloc[idx].tolist()]
+        if any("설비명" in val for val in row_str_list):
             header_idx = idx
             break
             
+    # 2) 헤더 위치 지정 및 상단 비어있는 행 삭제
     if header_idx is not None:
-        # 헤더 행으로 컬럼 설정 및 상단 제목/빈 행 삭제
-        new_cols = [str(val).strip() if pd.notna(val) else f"Unnamed_{i}" for i, val in enumerate(df.iloc[header_idx].values)]
+        raw_headers = df.iloc[header_idx].tolist()
+        new_cols = []
+        for i, h in enumerate(raw_headers):
+            h_str = str(h).strip() if pd.notna(h) and str(h).lower() != "nan" else f"Unused_{i}"
+            new_cols.append(h_str)
+        
         df = df.iloc[header_idx + 1:].copy()
         df.columns = new_cols
 
-    # '설비명' 컬럼 자동 찾기 및 유효 데이터만 필터링
-    equip_col = next((c for c in df.columns if "설비명" in c), None)
+    # 3) '설비명' 컬럼 기준 유효 데이터만 정제
+    equip_col = next((c for c in df.columns if "설비명" in str(c)), None)
     if equip_col:
-        df = df[df[equip_col].notna()]
-        df = df[~df[equip_col].astype(str).str.strip().isin(["None", "nan", "", "설비명"])]
+        mask = df[equip_col].apply(lambda x: pd.notna(x) and str(x).strip().lower() not in ["none", "nan", "", "설비명"])
+        df = df[mask]
         
     return df.reset_index(drop=True)
 
@@ -86,18 +91,17 @@ with st.sidebar:
             
             cleaned_df = clean_excel_data(raw_df)
             st.session_state["site_data_store"][selected_site] = cleaned_df
-            st.success(f"✅ [{selected_site}] 데이터 {len(cleaned_df)}건 저장 완료!")
+            st.success(f"✅ [{selected_site}] 데이터 {len(cleaned_df)}건 로드 완료!")
         except Exception as e:
             st.error(f"파일 처리 오류: {e}")
 
 
-# 6. 현재 선택된 사업소 데이터 가져오기
+# 6. 현재 선택된 사업소 데이터 불러오기
 current_df = pd.DataFrame()
 
 if selected_site in st.session_state["site_data_store"]:
     current_df = st.session_state["site_data_store"][selected_site]
 elif selected_site == "에너지사업소" and os.path.exists(DEFAULT_EXCEL_FILE):
-    # 에너지사업소 선택 시 기본 대장 파일 자동 적용
     try:
         raw_df = pd.read_excel(DEFAULT_EXCEL_FILE)
         current_df = clean_excel_data(raw_df)
@@ -120,10 +124,10 @@ if menu_type == "🏢 사업소별 설비 관리":
         st.info("👈 왼쪽 사이드바의 **'사업소 데이터 업로드'**에서 해당 사업소의 엑셀/CSV 파일을 등록해 주세요.")
     else:
         # 주요 컬럼 자동 인식
-        status_col = next((c for c in current_df.columns if "판정" in c or "상태" in c), None)
-        problem_col = next((c for c in current_df.columns if "문제점" in c), None)
-        speed_col = next((c for c in current_df.columns if "속도" in c or "진동" in c or "RMS" in c), None)
-        equip_col = next((c for c in current_df.columns if "설비" in c), None)
+        status_col = next((c for c in current_df.columns if "판정" in str(c) or "상태" in str(c)), None)
+        problem_col = next((c for c in current_df.columns if "문제점" in str(c)), None)
+        speed_col = next((c for c in current_df.columns if "속도" in str(c) or "진동" in str(c) or "RMS" in str(c)), None)
+        equip_col = next((c for c in current_df.columns if "설비" in str(c)), None)
 
         # 건수 집계 로직
         total_cnt = len(current_df)
