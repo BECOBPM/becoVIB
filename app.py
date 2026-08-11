@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import os
+import io
 
 # 1. 페이지 기본 설정
 st.set_page_config(
@@ -25,12 +26,12 @@ DEFAULT_EXCEL_FILE = "설비점검 및 정비 관리대장(에너지사업소).x
 if "site_data_store" not in st.session_state:
     st.session_state["site_data_store"] = {}
 
-# 4. 엑셀 데이터 정제 함수 (float 타잎 에러 방지 및 헤더 자동 정리)
+# 4. 엑셀 데이터 정제 함수 (상단 제목 및 빈 행 자동 제거, float 타입 예외 처리)
 def clean_excel_data(df):
     if df is None or df.empty:
         return pd.DataFrame()
     
-    # 1) '설비명' 단어가 포함된 실제 헤더 행 위치 찾기 (모든 셀을 str로 안전하게 변환)
+    # 1) '설비명' 단어가 포함된 실제 헤더 행 위치 찾기
     header_idx = None
     for idx in range(min(15, len(df))):
         row_str_list = [str(val) for val in df.iloc[idx].tolist()]
@@ -58,15 +59,37 @@ def clean_excel_data(df):
     return df.reset_index(drop=True)
 
 
-# 5. 사이드바 구성
+# 5. 샘플 엑셀 양식 생성 함수
+def generate_template_excel():
+    sample_df = pd.DataFrame({
+        "설비명": ["FD Fan #1", "FD Fan #2", "보일러 급수펌프 #1"],
+        "점검계획": ["반기", "반기", "반기"],
+        "점검내역": ["오일, 그리스, 진동 상태 등", "오일, 그리스, 진동 상태 등", "오일, 그리스, 진동 상태 등"],
+        "점검일자": ["2026-04-22", "2026-04-22", "2026-04-23"],
+        "문제점": ["전동기 진동", "정상", "정상"],
+        "원인분석": ["베어링 파손", "-", "-"],
+        "조치사항": ["분해정비", "-", "-"],
+        "예방정비내역": ["-", "오일, 그리스 주입", "오일, 그리스 주입"],
+        "차기점검일": ["2026-10-01", "2026-10-01", "2026-10-01"],
+        "진동속도(mm/s)": [4.8, 1.1, 0.9],
+        "판정": ["C (보수필요)", "A (양호)", "A (양호)"]
+    })
+    
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        sample_df.to_excel(writer, index=False, sheet_name='점검대장양식')
+    return output.getvalue()
+
+
+# 6. 사이드바 구성
 with st.sidebar:
     st.title("📌 메뉴 (Navigation)")
     
     menu_type = st.radio(
         "구분 선택",
         [
-            "🏢 사업소별 설비 관리", 
-            "📈 진동 데이터 분석 (파형/FFT)",
+            "🏢 사업소별 설비 현황 및 이력", 
+            "📂 데이터 업로드 및 양식 다운로드",
             "📏 진동 측정 기준 (ISO 10816)"
         ]
     )
@@ -77,26 +100,10 @@ with st.sidebar:
     selected_site = st.selectbox("🏢 사업소 선택", SITE_LIST, index=16)
     
     st.markdown("---")
-    
-    st.subheader("📂 사업소 데이터 업로드")
-    uploaded_file = st.file_uploader(f"[{selected_site}] 전용 파일 업로드 (CSV/Excel)", type=["csv", "xlsx"])
-
-    # 파일 업로드 시 해당 사업소 전용 저장소에 저장
-    if uploaded_file is not None:
-        try:
-            if uploaded_file.name.endswith('.csv'):
-                raw_df = pd.read_csv(uploaded_file)
-            else:
-                raw_df = pd.read_excel(uploaded_file)
-            
-            cleaned_df = clean_excel_data(raw_df)
-            st.session_state["site_data_store"][selected_site] = cleaned_df
-            st.success(f"✅ [{selected_site}] 데이터 {len(cleaned_df)}건 로드 완료!")
-        except Exception as e:
-            st.error(f"파일 처리 오류: {e}")
+    st.caption("부산환경공단 회전기기 진동 관리 시스템 v1.2")
 
 
-# 6. 현재 선택된 사업소 데이터 불러오기
+# 7. 기본 데이터 로드 (에너지사업소 파일)
 current_df = pd.DataFrame()
 
 if selected_site in st.session_state["site_data_store"]:
@@ -110,18 +117,18 @@ elif selected_site == "에너지사업소" and os.path.exists(DEFAULT_EXCEL_FILE
         current_df = pd.DataFrame()
 
 
-# 7. 메인 화면 구성
+# 8. 메인 화면 구성
 # ==========================================
-# 메뉴 1: 🏢 사업소별 설비 관리
+# 메뉴 1: 🏢 사업소별 설비 현황 및 이력
 # ==========================================
-if menu_type == "🏢 사업소별 설비 관리":
+if menu_type == "🏢 사업소별 설비 현황 및 이력":
     st.info(f"🏢 현재 선택된 사업소: **{selected_site}**")
     st.title(f"📜 [{selected_site}] 설비별 진동 점검 이력 및 현황")
     st.caption("부산환경공단 소속 회전기기 진동 상태 측정 데이터 관리 시스템")
     
     if current_df.empty:
         st.warning(f"💡 [{selected_site}]에 등록된 진동 점검 데이터가 없습니다.")
-        st.info("👈 왼쪽 사이드바의 **'사업소 데이터 업로드'**에서 해당 사업소의 엑셀/CSV 파일을 등록해 주세요.")
+        st.info("👈 메뉴에서 **'📂 데이터 업로드 및 양식 다운로드'**로 이동하여 파일을 등록해 주세요.")
     else:
         # 주요 컬럼 자동 인식
         status_col = next((c for c in current_df.columns if "판정" in str(c) or "상태" in str(c)), None)
@@ -140,8 +147,7 @@ if menu_type == "🏢 사업소별 설비 관리":
             danger_cnt = len(current_df[s_str.str.contains("D|위험|즉시|점검", case=False, na=False)])
         elif problem_col:
             p_str = current_df[problem_col].astype(str).str.strip()
-            # 문제점이 기록된 건수만 보수필요로 분류
-            has_problem = p_str.notna() & ~p_str.isin(["None", "nan", "", "정상"])
+            has_problem = p_str.notna() & ~p_str.isin(["None", "nan", "", "정상", "-"])
             warning_cnt = len(current_df[has_problem])
             good_cnt = total_cnt - warning_cnt
 
@@ -154,7 +160,7 @@ if menu_type == "🏢 사업소별 설비 관리":
         
         st.markdown("---")
         
-        # 설비 진동 수치 차트 (속도/진동 데이터가 있는 경우)
+        # 설비 진동 수치 차트
         if speed_col and equip_col:
             st.subheader("📊 설비별 진동 측정치 비교")
             fig_bar = px.bar(
@@ -174,40 +180,68 @@ if menu_type == "🏢 사업소별 설비 관리":
 
 
 # ==========================================
-# 메뉴 2: 📈 진동 데이터 분석 (파형/FFT)
+# 메뉴 2: 📂 데이터 업로드 및 양식 다운로드
 # ==========================================
-elif menu_type == "📈 진동 데이터 분석 (파형/FFT)":
-    st.title(f"🌊 [{selected_site}] 정밀 진동 파형 & FFT 주파수 분석")
-    st.caption("진동 신호의 시간 영역 파형(Time Domain) 및 주파수 영역(FFT) 분석을 수행합니다.")
-    
-    sampling_rate = st.number_input("샘플링 주파수 (Hz)", value=1000, step=100)
-    t = np.linspace(0, 1, sampling_rate, endpoint=False)
-    
-    vibration_signal = 2.5 * np.sin(2 * np.pi * 60 * t) + 1.2 * np.sin(2 * np.pi * 120 * t) + np.random.normal(0, 0.3, sampling_rate)
-    
-    rms_val = np.sqrt(np.mean(np.square(vibration_signal)))
-    peak_val = np.max(np.abs(vibration_signal))
-    
-    m1, m2, m3 = st.columns(3)
-    m1.metric("계산된 RMS (진동 실효값)", f"{rms_val:.2f} mm/s")
-    m2.metric("Peak (최대값)", f"{peak_val:.2f} mm/s")
-    m3.metric("Crest Factor", f"{(peak_val/rms_val):.2f}")
-    
-    n = len(vibration_signal)
-    fft_vals = np.fft.rfft(vibration_signal)
-    fft_freq = np.fft.rfftfreq(n, d=1.0 / sampling_rate)
-    amplitude = np.abs(fft_vals) * 2.0 / n
-    
-    tab1, tab2 = st.tabs(["📈 시간 영역 (Time Domain)", "🌊 주파수 영역 (FFT Spectrum)"])
-    
-    with tab1:
-        fig_time = px.line(x=t, y=vibration_signal, labels={'x': '시간 (초)', 'y': '진동 가속도/속도'}, title="시간 영역 파형")
-        st.plotly_chart(fig_time, use_container_width=True)
+elif menu_type == "📂 데이터 업로드 및 양식 다운로드":
+    st.title("📂 데이터 업로드 및 엑셀 양식 안내")
+    st.caption("각 사업소별 설비 점검 대장을 등록하거나 표준 업로드 양식을 다운로드합니다.")
+    st.markdown("---")
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        st.subheader("1️⃣ 표준 업로드 양식 다운로드")
+        st.markdown("""
+        정확한 데이터 인식을 위해 아래 **표준 양식 서식**에 맞춰 작성된 파일 업로드를 권장합니다.
         
-    with tab2:
-        fig_fft = px.line(x=fft_freq, y=amplitude, labels={'x': '주파수 (Hz)', 'y': '진폭 (Amplitude)'}, title="FFT 주파수 스펙트럼")
-        fig_fft.update_traces(line_color="#ff7f0e")
-        st.plotly_chart(fig_fft, use_container_width=True)
+        * **필수 포함 항목**: `설비명`, `점검일자`
+        * **권장 포함 항목**: `점검계획`, `점검내역`, `문제점`, `원인분석`, `조치사항`, `차기점검일`, `진동속도(mm/s)`, `판정`
+        """)
+        
+        # 샘플 엑셀 파일 다운로드 버튼
+        excel_bytes = generate_template_excel()
+        st.download_button(
+            label="📥 표준 엑셀 양식 다운로드 (.xlsx)",
+            data=excel_bytes,
+            file_name="회전기기_진동점검대장_표준양식.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+    with col2:
+        st.subheader(f"2️⃣ [{selected_site}] 데이터 파일 업로드")
+        st.markdown(f"현재 선택된 사업소(**{selected_site}**)에 데이터를 올립니다.")
+        
+        uploaded_file = st.file_uploader(
+            f"[{selected_site}] 전용 점검대장 업로드 (CSV/XLSX)", 
+            type=["csv", "xlsx"]
+        )
+
+        if uploaded_file is not None:
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    raw_df = pd.read_csv(uploaded_file)
+                else:
+                    raw_df = pd.read_excel(uploaded_file)
+                
+                cleaned_df = clean_excel_data(raw_df)
+                st.session_state["site_data_store"][selected_site] = cleaned_df
+                st.success(f"🎉 [{selected_site}] 데이터 {len(cleaned_df)}건이 성공적으로 등록되었습니다!")
+                
+                # 등록된 미리보기
+                st.markdown("##### 🔍 업로드 데이터 미리보기")
+                st.dataframe(cleaned_df.head(5), use_container_width=True)
+                
+            except Exception as e:
+                st.error(f"❌ 파일 업로드 중 오류가 발생했습니다: {e}")
+
+    st.markdown("---")
+    st.subheader("💡 작성 시 유의사항")
+    st.markdown("""
+    1. 엑셀 제목 행(Header) 위치는 상단 1~10번째 줄 내에 **'설비명'** 단어가 들어가 있으면 자동으로 인식됩니다.
+    2. 데이터가 없는 빈 셀은 `None` 또는 `-` 로 표시해도 무방합니다.
+    3. 등록된 데이터는 상단 **'🏢 사업소별 설비 현황 및 이력'** 메뉴에서 즉시 확인 가능합니다.
+    """)
 
 
 # ==========================================
