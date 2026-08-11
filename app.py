@@ -1,297 +1,104 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import os
-import io
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.formatting.rule import CellIsRule
 
-# 페이지 기본 설정
-st.set_page_config(
-    page_title="부산환경공단 - 설비 진동 & 이력 관리 시스템",
-    page_icon="⚙️",
-    layout="wide"
-)
-
-# 데이터 저장 경로
-DATA_DIR = "data"
-DATA_FILE = os.path.join(DATA_DIR, "vibration_data.csv")
-
-# 데이터 로드 및 초기화 함수
-@st.cache_data(ttl=1)
-def load_data():
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR)
-    
-    if not os.path.exists(DATA_FILE):
-        excel_path = "설비점검 및 정비 관리대장(에너지사업소).xlsx"
-        if os.path.exists(excel_path):
-            df_excel = pd.read_excel(excel_path, sheet_name='진동측정결과')
-            df_excel['설비명'] = df_excel['설비명'].ffill()
-            df_excel['측정일자'] = pd.to_datetime(df_excel['측정일자']).ffill()
-            df_excel['사업소'] = "에너지사업소"
-            df_excel.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
-            return df_excel
-        else:
-            cols = ['측정일자', '사업소', '설비명', '전동기(kW)', '측정위치 (1~4)', '축', '진동속도 (rms)', '부하상태 (%)', '판정 (A~D)', '이상 원인 추정', '정비 우선순위']
-            df_empty = pd.DataFrame(columns=cols)
-            df_empty.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
-            return df_empty
-    else:
-        df = pd.read_csv(DATA_FILE)
-        df['측정일자'] = pd.to_datetime(df['측정일자'])
-        return df
-
-df = load_data()
+wb = openpyxl.Workbook()
 
 # ==========================================
-# 🌲 [좌측 사이드바] 사업소 목차 및 설비 추가
+# 1. 진동측정기준 안내 시트 (첫 번째 탭)
 # ==========================================
-st.sidebar.title("🏢 부산환경공단")
-st.sidebar.markdown("**사업소 목록**")
+ws_guide = wb.active
+ws_guide.title = "진동측정기준"
+ws_guide.views.sheetView[0].showGridLines = True
 
-plants = [
-    "강변사업소", "수영사업소", "해운대사업소", "남부사업소", 
-    "명지사업소", "생곡사업소", "정관사업소", "중앙사업소", "서부사업소", "에너지사업소"
+# Title
+ws_guide.merge_cells("A1:F1")
+ws_guide["A1"] = "■ ISO 10816-3 진동 평가 기준표 (전동기 및 회전기기)"
+ws_guide["A1"].font = Font(name="맑은 고딕", size=14, bold=True, color="1F4E78")
+
+# Table Headers
+headers_guide = ["Machine Group", "설비 구분 / 용량", "기초 구분", "A (양호)", "B (장기운전)", "C (보수필요)", "D (즉시점검)"]
+ws_guide.append([]) # Blank row 2
+ws_guide.append(headers_guide) # Row 3
+
+guide_data = [
+    ["Group 1", "대형 전동기/설비 (P > 300 kW)", "강성 (Rigid)", "≤ 2.3 mm/s", "≤ 4.5 mm/s", "≤ 7.1 mm/s", "> 7.1 mm/s"],
+    ["Group 1", "대형 전동기/설비 (P > 300 kW)", "유연 (Flexible)", "≤ 3.5 mm/s", "≤ 7.1 mm/s", "≤ 11.0 mm/s", "> 11.0 mm/s"],
+    ["Group 2", "중형 전동기/설비 (15 kW < P ≤ 300 kW)", "강성 (Rigid)", "≤ 1.4 mm/s", "≤ 2.8 mm/s", "≤ 4.5 mm/s", "> 4.5 mm/s"],
+    ["Group 2", "중형 전동기/설비 (15 kW < P ≤ 300 kW)", "유연 (Flexible)", "≤ 2.3 mm/s", "≤ 4.5 mm/s", "≤ 7.1 mm/s", "> 7.1 mm/s"],
+    ["Group 3", "펌프 (P > 15 kW, 분리형 드라이버)", "강성 (Rigid)", "≤ 1.4 mm/s", "≤ 2.8 mm/s", "≤ 4.5 mm/s", "> 4.5 mm/s"],
+    ["Group 3", "펌프 (P > 15 kW, 분리형 드라이버)", "유연 (Flexible)", "≤ 2.3 mm/s", "≤ 4.5 mm/s", "≤ 7.1 mm/s", "> 7.1 mm/s"],
+    ["Group 4", "펌프 (P > 15 kW, 일체형 드라이버)", "강성 (Rigid)", "≤ 0.71 mm/s", "≤ 1.8 mm/s", "≤ 2.8 mm/s", "> 2.8 mm/s"],
+    ["Group 4", "펌프 (P > 15 kW, 일체형 드라이버)", "유연 (Flexible)", "≤ 1.4 mm/s", "≤ 2.8 mm/s", "≤ 4.5 mm/s", "> 4.5 mm/s"],
 ]
-selected_plant = st.sidebar.selectbox("사업소를 선택하세요", plants)
 
-st.sidebar.divider()
+for row in guide_data:
+    ws_guide.append(row)
 
-# ➕ 동적 설비 추가 기능
-st.sidebar.subheader("➕ 신규 설비 등록")
-with st.sidebar.form("add_equipment_form"):
-    new_eq_name = st.text_input("설비명 (예: #1 급수펌프)")
-    new_eq_kw = st.number_input("전동기 용량 (kW)", min_value=0.0, step=5.0)
-    submit_eq = st.form_submit_button("설비 등록")
-    
-    if submit_eq:
-        if new_eq_name:
-            new_row = pd.DataFrame([{
-                '측정일자': pd.Timestamp.now().strftime('%Y-%m-%d'),
-                '사업소': selected_plant,
-                '설비명': new_eq_name,
-                '전동기(kW)': new_eq_kw,
-                '측정위치 (1~4)': '1 (전동기 부하측)',
-                '축': 'x',
-                '진동속도 (rms)': 0.0,
-                '부하상태 (%)': 0.0,
-                '판정 (A~D)': 'A',
-                '이상 원인 추정': '신규 설비 등록',
-                '정비 우선순위': '양호'
-            }])
-            df_updated = pd.concat([df, new_row], ignore_index=True)
-            df_updated.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
-            st.success(f"[{selected_plant}] {new_eq_name} 등록 완료!")
-            st.rerun()
+# Style Guide Table
+thin_border = Border(left=Side(style='thin', color='D9D9D9'),
+                     right=Side(style='thin', color='D9D9D9'),
+                     top=Side(style='thin', color='D9D9D9'),
+                     bottom=Side(style='thin', color='D9D9D9'))
+
+for row in ws_guide.iter_rows(min_row=3, max_row=11, min_col=1, max_col=7):
+    for cell in row:
+        cell.font = Font(name="맑은 고딕", size=10)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+        if cell.row == 3:
+            cell.fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+            cell.font = Font(name="맑은 고딕", size=10, bold=True, color="FFFFFF")
 
 # ==========================================
-# 💻 [메인 화면] 대시보드 & 이력 관리
+# 2. 진동 측정 데이터 입력 시트 (두 번째 탭)
 # ==========================================
-st.title(f"🛠️ {selected_plant} 설비 진동 & 이력 관리")
+ws_data = wb.create_sheet(title="진동측정결과")
+ws_data.views.sheetView[0].showGridLines = True
 
-# 해당 사업소 데이터 필터링
-plant_df = df[df['사업소'] == selected_plant]
-available_equipments = plant_df['설비명'].dropna().unique().tolist()
+headers_data = ["측정일자", "설비명", "전동기(kW)", "측정위치", "방향", "진동속도 (rms)", "부하상태(%)", "판정 (A~D)", "이상 원인", "정비 우선순위"]
+ws_data.append(headers_data)
 
-# 4개 탭 구성 (첫 번째 탭: 사업소 요약)
-tab0, tab1, tab2, tab3 = st.tabs([
-    "📋 사업소 종합 요약", 
-    "📊 설비별 진동 추이", 
-    "📝 건별 데이터 입력", 
-    "📤 엑셀 대량 업로드 & 샘플 다운로드"
-])
+# Header Styling
+for cell in ws_data[1]:
+    cell.fill = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+    cell.font = Font(name="맑은 고딕", size=11, bold=True, color="FFFFFF")
+    cell.alignment = Alignment(horizontal="center", vertical="center")
 
-# ------------------------------------------
-# TAB 0: 사업소 종합 요약 대시보드
-# ------------------------------------------
-with tab0:
-    if len(plant_df) == 0:
-        st.info("📌 등록된 설비나 진동 데이터가 없습니다. 좌측 메뉴에서 설비를 등록해 주세요.")
-    else:
-        # 1. 핵심 KPI 카운트
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("총 등록 설비", f"{len(available_equipments)} 개")
-        c2.metric("🟢 정상 (A/B)", f"{len(plant_df[plant_df['판정 (A~D)'].isin(['A', 'B'])])} 건")
-        c3.metric("🟠 주의 (C등급/보수필요)", f"{len(plant_df[plant_df['판정 (A~D)'] == 'C'])} 건")
-        c4.metric("🔴 경고 (D등급/즉시점검)", f"{len(plant_df[plant_df['판정 (A~D)'] == 'D'])} 건")
-        
-        st.divider()
-        
-        # 2. 🚨 긴급 점검 필요 설비 알림판
-        urgent_df = plant_df[plant_df['정비 우선순위'] == '즉시점검']
-        if len(urgent_df) > 0:
-            st.error(f"🚨 **[긴급 점검 필요] 즉시 점검 대상이 {len(urgent_df)}건 발견되었습니다!**")
-            st.dataframe(
-                urgent_df[['측정일자', '설비명', '측정위치 (1~4)', '축', '진동속도 (rms)', '이상 원인 추정']], 
-                use_container_width=True
-            )
-        else:
-            st.success("✅ 현재 긴급 점검(D등급)이 필요한 설비가 없습니다.")
-            
-        st.divider()
-        
-        # 3. 차트 요약
-        col_summary1, col_summary2 = st.columns(2)
-        
-        with col_summary1:
-            st.subheader("📊 설비별 최근 최대 진동속도 (RMS)")
-            # 설비별 최근/최대 진동값 요약
-            max_rms_df = plant_df.groupby('설비명')['진동속도 (rms)'].max().reset_index()
-            fig_bar = px.bar(
-                max_rms_df,
-                x='설비명',
-                y='진동속도 (rms)',
-                title="설비별 최고 진동속도 현황",
-                color='진동속도 (rms)',
-                color_continuous_scale=['#2ecc71', '#e67e22', '#e74c3c']
-            )
-            fig_bar.add_hline(y=7.1, line_dash="dash", line_color="red", annotation_text="D등급 임계치(7.1)")
-            st.plotly_chart(fig_bar, use_container_width=True)
-            
-        with col_summary2:
-            st.subheader("🎯 사업소 전체 판정 등급 비율")
-            fig_pie = px.pie(
-                plant_df,
-                names='판정 (A~D)',
-                color='판정 (A~D)',
-                color_discrete_map={'A':'#2ecc71', 'B':'#3498db', 'C':'#e67e22', 'D':'#e74c3c'},
-                hole=0.4
-            )
-            st.plotly_chart(fig_pie, use_container_width=True)
+# 샘플 데이터 5줄 삽입 (자동 수식 내장)
+sample_rows = [
+    ["2026-04-02", "FD Fan #1", 310, "1(전동기)", "X", 12.3, 30],
+    ["2026-04-02", "FD Fan #1", 310, "1(전동기)", "Y", 2.8, 30],
+    ["2026-04-02", "1차 냉각수 #1", 11, "2(펌프)", "Z", 4.0, 100],
+    ["2026-04-02", "보일러 급수펌프 #1", 95, "1(전동기)", "X", 1.1, 100],
+    ["2026-04-02", "보일러 급수펌프 #1", 95, "1(전동기)", "Y", 4.8, 100]
+]
 
-# ------------------------------------------
-# TAB 1: 설비별 진동 추이
-# ------------------------------------------
-with tab1:
-    if len(available_equipments) == 0:
-        st.info("등록된 설비가 없습니다.")
-    else:
-        selected_eq = st.selectbox("조회할 설비를 선택하세요", available_equipments)
-        eq_df = plant_df[plant_df['설비명'] == selected_eq]
-        
-        st.subheader(f"📈 [{selected_eq}] 진동속도(RMS) 시계열 추이")
-        fig = px.line(
-            eq_df, 
-            x='측정일자', 
-            y='진동속도 (rms)', 
-            color='축',
-            markers=True,
-            hover_data=['측정위치 (1~4)', '판정 (A~D)', '정비 우선순위', '이상 원인 추정']
-        )
-        fig.add_hline(y=7.1, line_dash="dash", line_color="red", annotation_text="D등급 (위험/즉시점검)")
-        fig.add_hline(y=4.5, line_dash="dash", line_color="orange", annotation_text="C등급 (경고/보수필요)")
-        st.plotly_chart(fig, use_container_width=True)
-        
-        st.subheader("📋 측정 이력 대장")
-        st.dataframe(eq_df.sort_values(by='측정일자', ascending=False), use_container_width=True)
-
-# ------------------------------------------
-# TAB 2: 건별 직접 입력
-# ------------------------------------------
-with tab2:
-    st.subheader("📝 신규 진동 측정 결과 등록")
-    if len(available_equipments) == 0:
-        st.warning("먼저 좌측에서 설비를 등록해 주세요.")
-    else:
-        with st.form("input_form"):
-            c1, c2 = st.columns(2)
-            m_date = c1.date_input("측정일자")
-            eq_target = c2.selectbox("대상 설비", available_equipments)
-            
-            pos = c1.selectbox("측정위치", ["1 (전동기 부하측)", "2 (전동기 반부하측)", "3 (피동기 부하측)", "4 (피동기 반부하측)"])
-            axis = c2.selectbox("축 방향", ["x", "y", "z"])
-            
-            rms_val = c1.number_input("진동속도 (rms)", min_value=0.0, step=0.1)
-            load_val = c2.number_input("부하상태 (%)", min_value=0.0, max_value=100.0, value=80.0)
-            
-            grade = c1.selectbox("판정 등급", ["A", "B", "C", "D"])
-            priority = c2.selectbox("정비 우선순위", ["양호", "보수필요", "즉시점검"])
-            
-            cause = st.text_input("이상 원인 추정 및 정비 소견")
-            
-            submit_data = st.form_submit_button("저장하기")
-            
-            if submit_data:
-                eq_kw = eq_df['전동기(kW)'].values[0] if 'eq_df' in locals() and len(eq_df) > 0 else 0.0
-                
-                new_record = pd.DataFrame([{
-                    '측정일자': m_date.strftime('%Y-%m-%d'),
-                    '사업소': selected_plant,
-                    '설비명': eq_target,
-                    '전동기(kW)': eq_kw,
-                    '측정위치 (1~4)': pos,
-                    '축': axis,
-                    '진동속도 (rms)': rms_val,
-                    '부하상태 (%)': load_val,
-                    '판정 (A~D)': grade,
-                    '이상 원인 추정': cause,
-                    '정비 우선순위': priority
-                }])
-                
-                df_updated = pd.concat([df, new_record], ignore_index=True)
-                df_updated.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
-                st.success("새로운 진동 데이터가 저장되었습니다!")
-                st.rerun()
-
-# ------------------------------------------
-# TAB 3: 엑셀 파일 대량 업로드 및 샘플 다운로드
-# ------------------------------------------
-with tab3:
-    st.subheader("📤 기존 엑셀 대장 파일 업로드 및 샘플 다운로드")
-    col_down, col_up = st.columns([1, 2])
+for idx, r in enumerate(sample_rows, start=2):
+    # H열(판정): 자동 판정 수식
+    formula_grade = f'=IF(ISBLANK(F{idx}),"",IF(C{idx}>300,IF(F{idx}<=2.3,"A",IF(F{idx}<=4.5,"B",IF(F{idx}<=7.1,"C","D"))),IF(F{idx}<=1.4,"A",IF(F{idx}<=2.8,"B",IF(F{idx}<=4.5,"C","D")))))'
+    # J열(정비 우선순위): 자동 연동 수식
+    formula_priority = f'=IF(H{idx}="A","양호",IF(H{idx}="B","양호",IF(H{idx}="C","보수필요",IF(H{idx}="D","즉시점검",""))))'
     
-    with col_down:
-        st.markdown("##### 📥 1. 양식 샘플 다운로드")
-        st.write("샘플 양식을 받아 데이터를 작성해 주세요.")
-        
-        sample_data = pd.DataFrame([
-            {
-                '측정일자': '2026-04-22',
-                '설비명': 'FD Fan #1',
-                '전동기(kW)': 310.0,
-                '측정위치 (1~4)': '1 (전동기 부하측)',
-                '축': 'x',
-                '진동속도 (rms)': 12.3,
-                '부하상태 (%)': 30.0,
-                '판정 (A~D)': 'D',
-                '이상 원인 추정': '베어링 진동',
-                '정비 우선순위': '즉시점검'
-            }
-        ])
-        
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            sample_data.to_excel(writer, sheet_name='진동측정결과', index=False)
-        buffer.seek(0)
-        
-        st.download_button(
-            label="📄 진동측정대장 샘플 양식 (.xlsx)",
-            data=buffer,
-            file_name="진동측정대장_양식_샘플.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    row_data = r + [formula_grade, "", formula_priority]
+    ws_data.append(row_data)
 
-    with col_up:
-        st.markdown("##### 📤 2. 작성된 엑셀 파일 업로드")
-        uploaded_file = st.file_uploader("작성된 엑셀 파일을 선택하세요", type=["xlsx", "xls"])
-        
-        if uploaded_file is not None:
-            try:
-                try:
-                    up_df = pd.read_excel(uploaded_file, sheet_name='진동측정결과')
-                except:
-                    up_df = pd.read_excel(uploaded_file)
-                
-                up_df['설비명'] = up_df['설비명'].ffill()
-                up_df['측정일자'] = pd.to_datetime(up_df['측정일자']).ffill()
-                up_df['사업소'] = selected_plant
-                
-                st.write("📋 **업로드할 데이터 미리보기**")
-                st.dataframe(up_df.head(10))
-                
-                if st.button("이 데이터를 시스템에 일괄 저장"):
-                    df_updated = pd.concat([df, up_df], ignore_index=True)
-                    df_updated.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
-                    st.success("엑셀 데이터 일괄 업로드가 완료되었습니다!")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
+# 데이터 셀 서식 및 alignment
+for row in ws_data.iter_rows(min_row=2, max_row=100, min_col=1, max_col=10):
+    for cell in row:
+        cell.font = Font(name="맑은 고딕", size=10)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+# 조건부 서식 (H열 판정에 따라 색상 다르게)
+fill_d = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid") # 빨강
+fill_c = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid") # 주황/노랑
+fill_ab = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid") # 녹색
+
+ws_data.conditional_formatting.add("H2:H100", CellIsRule(operator='equal', formula=['"D"'], fill=fill_d))
+ws_data.conditional_formatting.add("H2:H100", CellIsRule(operator='equal', formula=['"C"'], fill=fill_c))
+ws_data.conditional_formatting.add("H2:H100", CellIsRule(operator='equal', formula=['"B"'], fill=fill_ab))
+ws_data.conditional_formatting.add("H2:H100", CellIsRule(operator='equal', formula=['"A"'], fill=fill_ab))
+
+# 저장
+wb.save("설비점검_진동측정_표준양식.xlsx")
+print("엑셀 샘플 파일 생성이 완료되었습니다.")
