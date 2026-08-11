@@ -7,7 +7,7 @@ import io
 
 # 1. 페이지 기본 설정
 st.set_page_config(
-    page_title="설비 진동점검 및 정비 관리 시스템",
+    page_title="사업소별 설비 진동점검 관리 시스템",
     page_icon="⚙️",
     layout="wide"
 )
@@ -15,13 +15,14 @@ st.set_page_config(
 # 2. 커스텀 CSS 스타일
 st.markdown("""
 <style>
-    .main-title { font-size: 24px; font-weight: bold; color: #1F4E78; margin-bottom: 20px; }
+    .main-title { font-size: 24px; font-weight: bold; color: #1F4E78; margin-bottom: 15px; }
+    .site-badge { background-color: #EBF1F5; padding: 6px 14px; border-radius: 20px; font-weight: bold; color: #1F4E78; display: inline-block; margin-bottom: 15px; }
     .result-card { padding: 15px; border-radius: 8px; font-weight: bold; font-size: 18px; text-align: center; margin-top: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
-# 3. 엑셀 표준 템플릿 생성 함수 (수식 & 서식 자동 적용)
-def create_excel_template():
+# 3. 사업소별 엑셀 표준 템플릿 생성 함수
+def create_excel_template(site_name="공통"):
     wb = openpyxl.Workbook()
     
     # [시트 1] 진동측정기준
@@ -30,7 +31,7 @@ def create_excel_template():
     ws_guide.views.sheetView[0].showGridLines = True
     
     ws_guide.merge_cells("A1:G1")
-    ws_guide["A1"] = "■ ISO 10816-3 진동 평가 기준표 (전동기 및 회전기기)"
+    ws_guide["A1"] = f"■ ISO 10816-3 진동 평가 기준표 ({site_name})"
     ws_guide["A1"].font = Font(name="맑은 고딕", size=14, bold=True, color="1F4E78")
     
     headers_guide = ["Machine Group", "설비 구분 / 용량", "기초 구분", "A (양호)", "B (장기운전)", "C (보수필요)", "D (즉시점검)"]
@@ -61,7 +62,7 @@ def create_excel_template():
     ws_data = wb.create_sheet(title="진동측정결과")
     ws_data.views.sheetView[0].showGridLines = True
     
-    headers_data = ["측정일자", "설비명", "전동기(kW)", "측정위치", "방향", "진동속도 (rms)", "부하상태(%)", "판정 (A~D)", "이상 원인", "정비 우선순위"]
+    headers_data = ["사업소명", "측정일자", "설비명", "전동기(kW)", "측정위치", "방향", "진동속도 (rms)", "부하상태(%)", "판정 (A~D)", "이상 원인", "정비 우선순위"]
     ws_data.append(headers_data)
     
     for cell in ws_data[1]:
@@ -70,16 +71,16 @@ def create_excel_template():
         cell.alignment = Alignment(horizontal="center", vertical="center")
         
     sample_rows = [
-        ["2026-04-02", "FD Fan #1", 310, "1(전동기)", "X", 12.3, 30],
-        ["2026-04-02", "FD Fan #1", 310, "1(전동기)", "Y", 2.8, 30],
-        ["2026-04-02", "1차 냉각수 #1", 11, "2(펌프)", "Z", 4.0, 100],
-        ["2026-04-02", "보일러 급수펌프 #1", 95, "1(전동기)", "X", 1.1, 100],
-        ["2026-04-02", "보일러 급수펌프 #1", 95, "1(전동기)", "Y", 4.8, 100]
+        [site_name, "2026-04-02", "FD Fan #1", 310, "1(전동기)", "X", 12.3, 30],
+        [site_name, "2026-04-02", "FD Fan #1", 310, "1(전동기)", "Y", 2.8, 30],
+        [site_name, "2026-04-02", "1차 냉각수 #1", 11, "2(펌프)", "Z", 4.0, 100],
+        [site_name, "2026-04-02", "보일러 급수펌프 #1", 95, "1(전동기)", "X", 1.1, 100],
+        [site_name, "2026-04-02", "보일러 급수펌프 #1", 95, "1(전동기)", "Y", 4.8, 100]
     ]
     
     for idx, r in enumerate(sample_rows, start=2):
-        formula_grade = f'=IF(ISBLANK(F{idx}),"",IF(C{idx}>300,IF(F{idx}<=2.3,"A",IF(F{idx}<=4.5,"B",IF(F{idx}<=7.1,"C","D"))),IF(F{idx}<=1.4,"A",IF(F{idx}<=2.8,"B",IF(F{idx}<=4.5,"C","D")))))'
-        formula_priority = f'=IF(H{idx}="A","양호",IF(H{idx}="B","양호",IF(H{idx}="C","보수필요",IF(H{idx}="D","즉시점검",""))))'
+        formula_grade = f'=IF(ISBLANK(G{idx}),"",IF(D{idx}>300,IF(G{idx}<=2.3,"A",IF(G{idx}<=4.5,"B",IF(G{idx}<=7.1,"C","D"))),IF(G{idx}<=1.4,"A",IF(G{idx}<=2.8,"B",IF(G{idx}<=4.5,"C","D")))))'
+        formula_priority = f'=IF(I{idx}="A","양호",IF(I{idx}="B","양호",IF(I{idx}="C","보수필요",IF(I{idx}="D","즉시점검",""))))'
         row_data = r + [formula_grade, "", formula_priority]
         ws_data.append(row_data)
 
@@ -87,58 +88,98 @@ def create_excel_template():
     fill_c = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
     fill_ab = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     
-    ws_data.conditional_formatting.add("H2:H100", CellIsRule(operator='equal', formula=['"D"'], fill=fill_d))
-    ws_data.conditional_formatting.add("H2:H100", CellIsRule(operator='equal', formula=['"C"'], fill=fill_c))
-    ws_data.conditional_formatting.add("H2:H100", CellIsRule(operator='equal', formula=['"B"'], fill=fill_ab))
-    ws_data.conditional_formatting.add("H2:H100", CellIsRule(operator='equal', formula=['"A"'], fill=fill_ab))
+    ws_data.conditional_formatting.add("I2:I100", CellIsRule(operator='equal', formula=['"D"'], fill=fill_d))
+    ws_data.conditional_formatting.add("I2:I100", CellIsRule(operator='equal', formula=['"C"'], fill=fill_c))
+    ws_data.conditional_formatting.add("I2:I100", CellIsRule(operator='equal', formula=['"B"'], fill=fill_ab))
+    ws_data.conditional_formatting.add("I2:I100", CellIsRule(operator='equal', formula=['"A"'], fill=fill_ab))
 
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
     return output
 
-# 4. 사이드바 메뉴 Navigation
+# 4. 최상위 사이드바 메뉴 (Navigation)
 st.sidebar.title("📌 메뉴 (Navigation)")
-menu = st.sidebar.radio(
-    "이동할 화면 선택",
-    ["📊 종합 대시보드", "📁 점검결과 엑셀 업로드", "📏 진동 측정 기준 (ISO 10816)", "📜 이력 관리"]
+main_menu = st.sidebar.radio(
+    "구분 선택",
+    ["🏢 사업소별 설비 관리", "📏 진동 측정 기준 (ISO 10816)"]
 )
 
-# 5. 화면별 콘텐츠
-if menu == "📊 종합 대시보드":
-    st.markdown("<div class='main-title'>📊 설비 진동 점검 종합 대시보드</div>", unsafe_allow_html=True)
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("총 점검 대상", "48 개")
-    col2.metric("양호 (A/B)", "36 개", delta="정상")
-    col3.metric("보수 필요 (C)", "7 개", delta="-2", delta_color="inverse")
-    col4.metric("즉시 점검 (D)", "5 개", delta="+1", delta_color="inverse")
-    
-    st.divider()
-    st.subheader("💡 엑셀 표준 템플릿 다운로드")
-    st.write("자동 판정 수식 및 ISO 10816-3 측정기준 시트가 포함된 표준 양식입니다.")
-    excel_file = create_excel_template()
-    st.download_button(
-        label="📥 표준 점검 엑셀 양식 다운로드 (.xlsx)",
-        data=excel_file,
-        file_name="설비점검_진동측정_표준양식.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+st.sidebar.divider()
+
+# 5. 메인 메뉴 1: 사업소별 설비 관리
+if main_menu == "🏢 사업소별 설비 관리":
+    # [1단계] 사업소 선택
+    selected_site = st.sidebar.selectbox(
+        "🏢 사업소 선택",
+        ["부산 사업소", "울산 사업소", "경주 사업소", "창원 사업소", "통합/전체"]
     )
-
-elif menu == "📁 점검결과 엑셀 업로드":
-    st.markdown("<div class='main-title'>📁 점검결과 엑셀 파일 업로드</div>", unsafe_allow_html=True)
-    uploaded_file = st.file_uploader("작성한 엑셀 파일을 업로드하세요", type=["xlsx", "xls"])
     
-    if uploaded_file is not None:
-        try:
-            df = pd.read_excel(uploaded_file, sheet_name="진동측정결과")
-            st.success("엑셀 데이터 로딩 성공!")
-            st.dataframe(df, use_container_width=True)
-        except Exception as e:
-            st.error(f"파일을 읽는 도중 오류가 발생했습니다: {e}")
+    # [2단계] 선택된 사업소의 세부 메뉴 나열
+    sub_menu = st.sidebar.radio(
+        f"[{selected_site}] 세부 메뉴",
+        ["📊 종합결과", "📁 점검결과 업로드", "📜 이력 관리"]
+    )
+    
+    # 현재 선택된 사업소 태그 표시
+    st.markdown(f"<div class='site-badge'>🏢 현재 선택된 사업소: <b>{selected_site}</b></div>", unsafe_allow_html=True)
+    
+    # [상세 1] 종합결과
+    if sub_menu == "📊 종합결과":
+        st.markdown(f"<div class='main-title'>📊 [{selected_site}] 설비 진동 점검 종합결과</div>", unsafe_allow_html=True)
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("사업소 점검 대상", "12 개")
+        col2.metric("양호 (A/B)", "9 개", delta="정상")
+        col3.metric("보수 필요 (C)", "2 개", delta="-1", delta_color="inverse")
+        col4.metric("즉시 점검 (D)", "1 개", delta="+1", delta_color="inverse")
+        
+        st.divider()
+        st.subheader(f"💡 [{selected_site}] 표준 엑셀 템플릿 다운로드")
+        st.write(f"**{selected_site}** 명칭이 반영된 점검 양식 및 ISO 10816-3 기준표 시트가 첨부되어 있습니다.")
+        excel_file = create_excel_template(selected_site)
+        st.download_button(
+            label=f"📥 {selected_site} 점검 엑셀 양식 다운로드 (.xlsx)",
+            data=excel_file,
+            file_name=f"{selected_site}_진동점검_표준양식.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+    # [상세 2] 점검결과 업로드
+    elif sub_menu == "📁 점검결과 업로드":
+        st.markdown(f"<div class='main-title'>📁 [{selected_site}] 점검결과 엑셀 업로드</div>", unsafe_allow_html=True)
+        st.info(f"선택하신 **[{selected_site}]** 전용 진동점검 결과 엑셀 파일(.xlsx)을 업로드해주세요.")
+        
+        uploaded_file = st.file_uploader(f"[{selected_site}] 점검결과 파일 선택", type=["xlsx", "xls"])
+        
+        if uploaded_file is not None:
+            try:
+                df = pd.read_excel(uploaded_file, sheet_name="진동측정결과")
+                st.success(f"[{selected_site}] 점검 데이터 로딩 완료!")
+                st.dataframe(df, use_container_width=True)
+            except Exception as e:
+                st.error(f"파일을 읽는 도중 오류가 발생했습니다: {e}")
 
-elif menu == "📏 진동 측정 기준 (ISO 10816)":
-    st.markdown("<div class='main-title'>📏 ISO 10816-3 진동 평가 기준 안내</div>", unsafe_allow_html=True)
+    # [상세 3] 이력 관리
+    elif sub_menu == "📜 이력 관리":
+        st.markdown(f"<div class='main-title'>📜 [{selected_site}] 설비별 진동점검 이력 관리</div>", unsafe_allow_html=True)
+        st.write(f"**[{selected_site}]** 소속 회전기기(보일러 급수펌프, FD Fan, 송풍기 등)의 누적 측정 및 정비 이력 데이터입니다.")
+        
+        # 사업소별 샘플 이력 데이터
+        history_df = pd.DataFrame({
+            "측정일자": ["2026-04-01", "2026-03-15", "2026-02-10", "2026-01-20"],
+            "사업소명": [selected_site] * 4,
+            "설비명": ["FD Fan #1", "보일러 급수펌프 #1", "1차 냉각수펌프 #2", "FD Fan #1"],
+            "측정위치": ["1(전동기) X", "1(전동기) Y", "2(펌프) Z", "1(전동기) X"],
+            "진동속도(mm/s)": [12.3, 4.8, 1.2, 11.5],
+            "판정": ["D (즉시점검)", "C (보수필요)", "A (양호)", "D (즉시점검)"],
+            "조치사항 및 상태": ["베어링 수선 정비 예정", "구리스 정량 보충 완료", "정공정 이상없음", "진동 트렌드 지속 관찰 중"]
+        })
+        st.dataframe(history_df, use_container_width=True)
+
+# 6. 메인 메뉴 2: 진동 측정 기준 (독립 페이지)
+elif main_menu == "📏 진동 측정 기준 (ISO 10816)":
+    st.markdown("<div class='main-title'>📏 ISO 10816-3 진동 평가 표준 기준 (공통)</div>", unsafe_allow_html=True)
+    st.write("본 페이지는 전 사업소 공통으로 적용되는 **ISO 10816-3 표준 평가 기준** 및 **진동 계산기** 독립 안내 페이지입니다.")
     
     st.subheader("⚡ 실시간 진동 판정 계산기")
     col_a, col_b = st.columns(2)
@@ -172,7 +213,3 @@ elif menu == "📏 진동 측정 기준 (ISO 10816)":
         "D (즉시점검)": ["> 4.5 mm/s", "> 7.1 mm/s"]
     })
     st.table(df_std)
-
-elif menu == "📜 이력 관리":
-    st.markdown("<div class='main-title'>📜 점검 이력 및 정비 현황</div>", unsafe_allow_html=True)
-    st.info("이전에 등록된 설비별 진동 측정 이력 및 조치 사항을 조회하는 화면입니다.")
