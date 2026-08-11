@@ -26,7 +26,54 @@ DEFAULT_EXCEL_FILE = "설비점검 및 정비 관리대장(에너지사업소).x
 if "site_data_store" not in st.session_state:
     st.session_state["site_data_store"] = {}
 
-# 4. 엑셀 데이터 정제 함수 (상단 제목 및 빈 행 자동 제거, float 예외 처리)
+
+# 4. D등급 최우선 판정 및 판정 컬럼 정제 함수
+def standardize_and_grade(df):
+    if df is None or df.empty:
+        return df
+    
+    # 기존 '판정' 또는 '등급' 관련 컬럼 찾기
+    status_col = next((c for c in df.columns if any(kw in str(c) for kw in ["판정", "등급", "상태", "Zone", "Grade"])), None)
+
+    def evaluate_row(row):
+        # 1) 기존 판정 컬럼에 D/C/A/B가 명시된 경우
+        if status_col and pd.notna(row[status_col]):
+            val = str(row[status_col]).strip().upper()
+            if any(k in val for k in ["D", "위험", "즉시", "4"]):
+                return "🔴 D (즉시점검)"
+            elif any(k in val for k in ["C", "주의", "보수", "3"]):
+                return "🟡 C (보수필요)"
+            elif any(k in val for k in ["A", "B", "양호", "정상", "1", "2"]):
+                return "🟢 A/B (양호)"
+
+        # 2) 판정 컬럼이 없거나 단순 문제점 기록인 경우 행 전체 텍스트 분석
+        row_text = " ".join([str(v) for v in row.values if pd.notna(v)]).strip()
+
+        # [최우선] D등급 심각 키워드 감지 (파손, 즉시, 위험, D)
+        d_keywords = ["파손", "즉시", "위험", "D등급", "ZONE D", "교체", "긴급", "불량"]
+        if any(k.upper() in row_text.upper() for k in d_keywords):
+            return "🔴 D (즉시점검)"
+
+        # C등급 일반 주의 키워드 감지
+        c_keywords = ["C등급", "ZONE C", "보수필요", "보수 필요", "주의", "진동", "분해정비", "이상"]
+        if any(k.upper() in row_text.upper() for k in c_keywords):
+            return "🟡 C (보수필요)"
+
+        return "🟢 A/B (양호)"
+
+    # 판정 컬럼 새로 적용
+    df["판정"] = df.apply(evaluate_row, axis=1)
+
+    # 보기 좋게 '판정' 컬럼을 '설비명' 바로 뒤(2번째)로 배치
+    cols = list(df.columns)
+    cols.remove("판정")
+    equip_idx = next((i for i, c in enumerate(cols) if "설비" in str(c)), 0)
+    cols.insert(equip_idx + 1, "판정")
+
+    return df[cols]
+
+
+# 5. 엑셀 데이터 정제 함수 (제목행 제거 및 유효 행 정제)
 def clean_excel_data(df):
     if df is None or df.empty:
         return pd.DataFrame()
@@ -56,19 +103,22 @@ def clean_excel_data(df):
         mask = df[equip_col].apply(lambda x: pd.notna(x) and str(x).strip().lower() not in ["none", "nan", "", "설비명"])
         df = df[mask]
         
-    return df.reset_index(drop=True)
+    df = df.reset_index(drop=True)
+    
+    # 4) D등급 최우선 자동 판정 처리
+    return standardize_and_grade(df)
 
 
-# 5. 실무 필수 항목 중심의 간소화된 샘플 엑셀 양식 생성
+# 6. 실무 필수 항목 중심의 샘플 엑셀 양식 생성
 def generate_template_excel():
     sample_df = pd.DataFrame({
         "설비명": ["FD Fan #1", "FD Fan #2", "보일러 급수펌프 #1", "보일러 급수펌프 #2"],
+        "판정": ["🔴 D (즉시점검)", "🟢 A/B (양호)", "🟡 C (보수필요)", "🔴 D (즉시점검)"],
         "점검일자": ["2026-04-22", "2026-04-22", "2026-04-23", "2026-04-23"],
-        "문제점": ["전동기 진동", "정상", "정상", "전동기, 펌프 진동"],
-        "원인분석": ["베어링 파손", "-", "-", "베어링 파손"],
-        "조치사항": ["분해정비", "-", "오일 주입", "분해정비"],
-        "진동속도(mm/s)": [4.8, 1.1, 0.9, 5.2],
-        "판정": ["C (보수필요)", "A (양호)", "A (양호)", "D (즉시점검)"]
+        "문제점": ["전동기 진동", "정상", "진동 발생", "전동기, 펌프 진동"],
+        "원인분석": ["베어링 파손", "-", "소음 수치 상승", "베어링 파손"],
+        "조치사항": ["분해정비 및 베어링 교체", "-", "오일 주입 및 구리스 보충", "분해정비"],
+        "진동속도(mm/s)": [7.8, 1.1, 3.2, 8.5]
     })
     
     output = io.BytesIO()
@@ -77,7 +127,7 @@ def generate_template_excel():
     return output.getvalue()
 
 
-# 6. 사이드바 구성
+# 7. 사이드바 구성
 with st.sidebar:
     st.title("📌 메뉴 (Navigation)")
     
@@ -91,15 +141,12 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    
-    # 사업소 선택 (기본값: 에너지사업소)
     selected_site = st.selectbox("🏢 사업소 선택", SITE_LIST, index=16)
-    
     st.markdown("---")
-    st.caption("부산환경공단 회전기기 진동 관리 시스템 v1.3")
+    st.caption("부산환경공단 회전기기 진동 관리 시스템 v1.4")
 
 
-# 7. 기본 데이터 로드 (에너지사업소 파일)
+# 8. 기본 데이터 로드 (에너지사업소 파일)
 current_df = pd.DataFrame()
 
 if selected_site in st.session_state["site_data_store"]:
@@ -113,7 +160,7 @@ elif selected_site == "에너지사업소" and os.path.exists(DEFAULT_EXCEL_FILE
         current_df = pd.DataFrame()
 
 
-# 8. 메인 화면 구성
+# 9. 메인 화면 구성
 # ==========================================
 # 메뉴 1: 🏢 사업소별 설비 현황 및 이력
 # ==========================================
@@ -126,79 +173,40 @@ if menu_type == "🏢 사업소별 설비 현황 및 이력":
         st.warning(f"💡 [{selected_site}]에 등록된 진동 점검 데이터가 없습니다.")
         st.info("👈 메뉴에서 **'📂 데이터 업로드 및 양식 다운로드'**로 이동하여 파일을 등록해 주세요.")
     else:
-        # 컬럼 자동 탐색
-        status_col = next((c for c in current_df.columns if "판정" in str(c) or "상태" in str(c)), None)
-        problem_col = next((c for c in current_df.columns if "문제점" in str(c)), None)
-        cause_col = next((c for c in current_df.columns if "원인" in str(c)), None)
-        action_col = next((c for c in current_df.columns if "조치" in str(c)), None)
-        speed_col = next((c for c in current_df.columns if "속도" in str(c) or "진동" in str(c) or "RMS" in str(c)), None)
-        equip_col = next((c for c in current_df.columns if "설비" in str(c)), None)
-        date_col = next((c for c in current_df.columns if "일자" in str(c) or "날짜" in str(c)), None)
-
-        # 1) 문제/보수 필요 설비 필터링
-        issue_df = pd.DataFrame()
-        
-        if problem_col:
-            p_str = current_df[problem_col].astype(str).str.strip()
-            issue_mask = p_str.notna() & ~p_str.isin(["None", "nan", "", "정상", "-", "양호"])
-            issue_df = current_df[issue_mask]
-        elif status_col:
-            s_str = current_df[status_col].astype(str)
-            issue_mask = s_str.str.contains("C|D|주의|보수|위험|즉시", case=False, na=False)
-            issue_df = current_df[issue_mask]
-
-        # 2) 건수 집계 로직
+        # 건수 집계 (D등급 / C등급 / A,B등급 정확 분리)
         total_cnt = len(current_df)
-        warning_cnt = len(issue_df)
-        
-        if status_col:
-            s_str = current_df[status_col].astype(str)
-            danger_cnt = len(current_df[s_str.str.contains("D|위험|즉시", case=False, na=False)])
-            good_cnt = total_cnt - warning_cnt
-        else:
-            danger_cnt = 0
-            good_cnt = total_cnt - warning_cnt
+        status_series = current_df["판정"].astype(str) if "판정" in current_df.columns else pd.Series([])
+
+        danger_cnt = len(current_df[status_series.str.contains("D|즉시", case=False, na=False)])
+        warning_cnt = len(current_df[status_series.str.contains("C|보수", case=False, na=False)])
+        good_cnt = total_cnt - danger_cnt - warning_cnt
 
         # 상단 요약 카운트 카드
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("📊 전체 점검 설비", f"{total_cnt} 건")
-        c2.metric("✅ 양호 (정상)", f"{good_cnt} 건")
-        c3.metric("⚠️ 보수/점검 필요", f"{warning_cnt} 건")
-        c4.metric("🚨 위험 (즉시점검)", f"{danger_cnt} 건")
+        c2.metric("✅ 양호 (A/B)", f"{good_cnt} 건")
+        c3.metric("⚠️ 보수 필요 (C)", f"{warning_cnt} 건")
+        c4.metric("🚨 즉시 점검 (D)", f"{danger_cnt} 건")
         
         st.markdown("---")
 
-        # 🚨 [신규 기능] 어디가 문제인지 보여주는 이상 설비 요약 섹션
+        # 🚨 D등급 및 C등급 이상 설비 필터링
+        issue_df = current_df[status_series.str.contains("D|C|즉시|보수", case=False, na=False)]
+
         if not issue_df.empty:
-            st.error(f"⚠️ **[{selected_site}] 점검/보수 필요 이상 설비 ({len(issue_df)}건)**")
-            
-            # 핵심 정보만 골라 보여주기
-            display_cols = [c for c in [equip_col, date_col, problem_col, cause_col, action_col, speed_col, status_col] if c is not None]
-            
-            if display_cols:
-                st.dataframe(
-                    issue_df[display_cols],
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.dataframe(issue_df, use_container_width=True, hide_index=True)
+            st.error(f"⚠️ **[{selected_site}] 점검/보수 필요 이상 설비 ({len(issue_df)}건 - D등급: {danger_cnt}건, C등급: {warning_cnt}건)**")
+            st.dataframe(issue_df, use_container_width=True, hide_index=True)
             st.markdown("---")
         else:
             st.success("🎉 현재 보수 및 점검이 필요한 이상 설비가 없습니다.")
             st.markdown("---")
 
-        # 📋 불필요한 열(차기점검일, 점검계획 등)을 제외한 핵심 대장 표출
+        # 📋 전체 설비 대장 (불필요한 차기점검일 등 수식 열만 정제)
         st.subheader("📋 전체 설비 점검 이력 대장")
-        
-        # 제외할 무의미한/중복 컬럼 목록
         ignore_keywords = ["차기점검일", "점검계획", "점검내역", "예방정비내역", "Unused"]
         filtered_cols = [c for c in current_df.columns if not any(kw in str(c) for kw in ignore_keywords)]
         
-        if filtered_cols:
-            st.dataframe(current_df[filtered_cols], use_container_width=True)
-        else:
-            st.dataframe(current_df, use_container_width=True)
+        st.dataframe(current_df[filtered_cols], use_container_width=True, hide_index=True)
 
 
 # ==========================================
@@ -214,15 +222,15 @@ elif menu_type == "📂 데이터 업로드 및 양식 다운로드":
     with col1:
         st.subheader("1️⃣ 간소화 표준 양식 다운로드")
         st.markdown("""
-        차기점검일 등 불필요한 항목을 빼고 **핵심 7개 항목**으로 구성된 양식입니다.
+        D/C/A/B 등급이 명확히 표출되는 **표준 7개 항목** 서식입니다.
         
-        * **필수 항목**: `설비명`, `점검일자`, `문제점`
-        * **권장 항목**: `원인분석`, `조치사항`, `진동속도(mm/s)`, `판정`
+        * **필수 항목**: `설비명`, `판정`, `점검일자`, `문제점`
+        * **권장 항목**: `원인분석`, `조치사항`, `진동속도(mm/s)`
         """)
         
         excel_bytes = generate_template_excel()
         st.download_button(
-            label="📥 필수 항목만 담은 표준 엑셀 양식 다운로드 (.xlsx)",
+            label="📥 표준 엑셀 양식 다운로드 (.xlsx)",
             data=excel_bytes,
             file_name="회전기기_진동점검대장_표준양식.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -231,27 +239,17 @@ elif menu_type == "📂 데이터 업로드 및 양식 다운로드":
 
     with col2:
         st.subheader(f"2️⃣ [{selected_site}] 데이터 파일 업로드")
-        st.markdown(f"현재 선택된 사업소(**{selected_site}**)에 데이터를 등록합니다.")
-        
-        uploaded_file = st.file_uploader(
-            f"[{selected_site}] 전용 점검대장 업로드 (CSV/XLSX)", 
-            type=["csv", "xlsx"]
-        )
+        uploaded_file = st.file_uploader(f"[{selected_site}] 전용 점검대장 업로드 (CSV/XLSX)", type=["csv", "xlsx"])
 
         if uploaded_file is not None:
             try:
-                if uploaded_file.name.endswith('.csv'):
-                    raw_df = pd.read_csv(uploaded_file)
-                else:
-                    raw_df = pd.read_excel(uploaded_file)
-                
+                raw_df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
                 cleaned_df = clean_excel_data(raw_df)
                 st.session_state["site_data_store"][selected_site] = cleaned_df
                 st.success(f"🎉 [{selected_site}] 데이터 {len(cleaned_df)}건이 성공적으로 등록되었습니다!")
                 
                 st.markdown("##### 🔍 업로드 데이터 미리보기")
                 st.dataframe(cleaned_df.head(5), use_container_width=True)
-                
             except Exception as e:
                 st.error(f"❌ 파일 업로드 중 오류가 발생했습니다: {e}")
 
@@ -271,7 +269,6 @@ elif menu_type == "📏 진동 측정 기준 (ISO 10816)":
     z4.error("🔴 **영역 D (Zone D)**\n\n설비 손상 위험, 즉시 운전 정지 및 점검")
     
     st.markdown("---")
-    
     st.subheader("📊 ISO 10816-3 진동 속도 기준표 (RMS mm/s)")
     
     iso_data = {
