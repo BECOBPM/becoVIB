@@ -1,132 +1,136 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 
 # 페이지 기본 설정
-st.set_page_config(
-    page_title="부산환경공단 설비 관리 시스템",
-    page_icon="🏢",
-    layout="wide"
-)
+st.set_page_config(page_title="설비별 진동 점검 현황 대시보드", layout="wide")
 
-# -------------------------------------------------------------------
-# 1. 사이드바 (Navigation & 사업소 선택)
-# -------------------------------------------------------------------
+# Custom CSS로 지표 카드 스타일링 강화
+st.markdown("""
+<style>
+    div[data-testid="stMetric"] {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        padding: 15px 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# 1. 사이드바 메뉴 및 파일 업로드 기능
+# ---------------------------------------------------------
 st.sidebar.title("📌 메뉴 (Navigation)")
 
-# 구분 선택 라디오 버튼
-menu_option = st.sidebar.radio(
-    "구분 선택",
-    ["🏢 사업소별 설비 관리", "📏 진동 측정 기준 (ISO 10816)"]
+st.sidebar.subheader("📂 데이터 파일 업로드")
+uploaded_file = st.sidebar.file_uploader(
+    "CSV 또는 엑셀 파일(.xlsx)을 업로드하세요", 
+    type=["csv", "xlsx", "xls"]
 )
+
+# 데이터 로드 캐싱 함수
+@st.cache_data
+def load_data(file):
+    if file is not None:
+        if file.name.endswith(".csv"):
+            return pd.read_csv(file)
+        else:
+            return pd.read_excel(file)
+    else:
+        # 업로드된 파일이 없을 때 기본 예시 데이터
+        data = {
+            "측정일자": ["2026-04-02", "2026-04-02", "2026-04-01", "2026-03-28"],
+            "사업소명": ["에너지사업소", "에너지사업소", "에너지사업소", "에너지사업소"],
+            "설비명": ["집단에너지 FD Fan #1", "집단에너지 FD Fan #1", "보일러 급수펌프 #1", "1차 냉각수펌프 #2"],
+            "전동기(kW)": [310, 310, 95, 11],
+            "측정위치": ["1(전동기) X", "1(전동기) Y", "2(펌프) Z", "1(전동기) X"],
+            "속도(mm/s)": [12.3, 2.8, 4.8, 1.1],
+            "판정": ["D (즉시점검)", "B (양호)", "C (보수필요)", "A (양호)"],
+            "조치사항": ["베어링 수선 정비", "정상운전", "구리스 보충 및 트렌드 관찰", "정상운전"]
+        }
+        return pd.DataFrame(data)
+
+df = load_data(uploaded_file)
 
 st.sidebar.markdown("---")
 
-# 부산환경공단 공식 홈페이지 기준 개별 사업소 리스트 (그룹화 없이 1:1 구성)
-beco_sites = [
-    "에너지사업소",
-    "해운대사업단",
-    "명지사업소",
-    "생곡사업단",
-    "대기환경사업소",
-    "수영사업단",
-    "강변사업단",
-    "남부사업소",
-    "녹산사업소",
-    "기장사업소",
-    "동부사업소",
-    "중앙사업소",
-    "영도사업소",
-    "정관사업소",
-    "서부사업소",
-    "관로사업소",
-    "하수자원사업소",
-    "위생사업소",
-    "전체 / 통합"
-]
-
-# 드롭다운 사업소 선택 (기본값: 에너지사업소)
-selected_site = st.sidebar.selectbox(
-    "🏢 사업소 선택",
-    options=beco_sites,
-    index=0  # 에너지사업소가 기본 선택됨
-)
-
-# -------------------------------------------------------------------
-# 2. 샘플 데이터 생성 함수 (에너지사업소 및 타 사업소 데이터)
-# -------------------------------------------------------------------
-@st.cache_data
-def load_vibration_data():
-    # 에너지사업소 중심 및 타 사업소 예시 데이터
-    data = [
-        {"측정일자": "2026-04-02", "사업소명": "에너지사업소", "설비명": "집단에너지 FD Fan #1", "전동기(kW)": 310, "측정위치": "1(전동기) X", "속도(mm/s)": 12.3, "판정": "D (즉시점검)", "조치사항": "베어링 수선 정비"},
-        {"측정일자": "2026-04-02", "사업소명": "에너지사업소", "설비명": "집단에너지 FD Fan #1", "전동기(kW)": 310, "측정위치": "1(전동기) Y", "속도(mm/s)": 2.8, "판정": "B (양호)", "조치사항": "정상운전"},
-        {"측정일자": "2026-04-01", "사업소명": "에너지사업소", "설비명": "보일러 급수펌프 #1", "전동기(kW)": 95, "측정위치": "2(펌프) Z", "속도(mm/s)": 4.8, "판정": "C (보수필요)", "조치사항": "구리스 보충 및 트렌드 관찰"},
-        {"측정일자": "2026-03-28", "사업소명": "에너지사업소", "설비명": "1차 냉각수펌프 #2", "전동기(kW)": 11, "측정위치": "1(전동기) X", "속도(mm/s)": 1.1, "판정": "A (양호)", "조치사항": "정상운전"},
-        {"측정일자": "2026-03-15", "사업소명": "해운대사업단", "설비명": "소각로 유인풍기 #2", "전동기(kW)": 220, "측정위치": "2(풍기) Y", "속도(mm/s)": 5.2, "판정": "C (보수필요)", "조치사항": "진동 관찰"},
-        {"측정일자": "2026-03-10", "사업소명": "명지사업소", "설비명": "슬러지 수송펌프 #1", "전동기(kW)": 45, "측정위치": "1(전동기) X", "속도(mm/s)": 1.4, "판정": "A (양호)", "조치사항": "정상운전"}
-    ]
-    return pd.DataFrame(data)
-
-df_all = load_vibration_data()
-
-# 선택된 사업소에 맞게 데이터 필터링
-if selected_site == "전체 / 통합":
-    df_filtered = df_all
+# 사업소 선택 드롭다운
+if "사업소명" in df.columns:
+    site_list = df["사업소명"].unique()
+    selected_site = st.sidebar.selectbox("🏢 사업소 선택", site_list)
+    filtered_df = df[df["사업소명"] == selected_site].copy()
 else:
-    df_filtered = df_all[df_all["사업소명"] == selected_site]
+    selected_site = "전체 사업소"
+    filtered_df = df.copy()
 
-# -------------------------------------------------------------------
-# 3. 메인 화면 출력
-# -------------------------------------------------------------------
-if menu_option == "🏢 사업소별 설비 관리":
-    # 상단 배지 표시
-    st.info(f"🏢 현재 선택된 사업소: **{selected_site}**")
-    
-    st.title(f"📜 [{selected_site}] 설비별 진동 점검 이력 및 현황")
-    st.caption(f"부산환경공단 {selected_site} 소속 회전기기(보일러 급수펌프, 송풍기, 펌프 등) 진동 상태 측정 데이터")
+# ---------------------------------------------------------
+# 2. 메인 화면 - 상단 헤더 및 현황 요약 카드
+# ---------------------------------------------------------
+st.info(f"🏢 현재 선택된 사업소: **{selected_site}**")
 
-    # 메트릭 요약 카드
-    col1, col2, col3, col4 = st.columns(4)
-    
-    total_cnt = len(df_filtered)
-    good_cnt = len(df_filtered[df_filtered['판정'].str.startswith(('A', 'B'))])
-    warn_cnt = len(df_filtered[df_filtered['판정'].str.startswith('C')])
-    crit_cnt = len(df_filtered[df_filtered['판정'].str.startswith('D')])
+st.title(f"📜 [{selected_site}] 설비별 진동 점검 이력 및 현황")
+st.caption("회전기기(보일러 급수펌프, 송풍기, 펌프 등) 진동 상태 측정 데이터 및 점검 이력 관리")
 
-    col1.metric("점검 대상 설비 데이터", f"{total_cnt} 건", selected_site)
-    col2.metric("양호 (A / B)", f"{good_cnt} 건", "정상 운전중")
-    col3.metric("보수 필요 (C)", f"{warn_cnt} 건", "계획 정비", delta_color="off")
-    col4.metric("즉시 점검 (D)", f"{crit_cnt} 건", "긴급 정비", delta_color="inverse")
+# 데이터 현황 집계
+total_count = len(filtered_df)
+good_count = len(filtered_df[filtered_df["판정"].astype(str).str.contains("A|B|양호", na=False)])
+repair_count = len(filtered_df[filtered_df["판정"].astype(str).str.contains("C|보수", na=False)])
+urgent_count = len(filtered_df[filtered_df["판정"].astype(str).str.contains("D|즉시|긴급", na=False)])
 
-    st.markdown("---")
+# 4열 지표 카드 레이아웃
+col1, col2, col3, col4 = st.columns(4)
 
-    # 데이터 테이블 출력
-    st.subheader("📋 상세 점검 이력")
-    
-    if df_filtered.empty:
-        st.warning(f" 현재 {selected_site}에 등록된 측정 데이터가 없습니다.")
-    else:
-        # 조건별 스타일 적용 (D등급 빨간색 강조 등)
-        def highlight_status(val):
-            if 'D (' in str(val):
-                return 'background-color: #FFCDD2; color: #B71C1C; font-weight: bold;'
-            elif 'C (' in str(val):
-                return 'background-color: #FFE0B2; color: #E65100; font-weight: bold;'
-            elif 'A (' in str(val) or 'B (' in str(val):
-                return 'color: #2E7D32;'
-            return ''
+with col1:
+    st.metric(
+        label="📊 전체 점검 건수", 
+        value=f"{total_count} 건", 
+        delta=f"{selected_site} 총 데이터"
+    )
 
-        styled_df = df_filtered.style.map(highlight_status, subset=['판정'])
-        st.dataframe(styled_df, use_container_width=True)
+with col2:
+    st.metric(
+        label="✅ 양호 (A / B)", 
+        value=f"{good_count} 건", 
+        delta="정상 운전 중",
+        delta_color="normal"
+    )
 
-elif menu_option == "📏 진동 측정 기준 (ISO 10816)":
-    st.title("📏 진동 측정 및 평가 기준 (ISO 10816)")
-    st.write("ISO 10816-3 회전기기 진동 속도(mm/s RMS) 판정 기준표입니다.")
-    
-    iso_data = {
-        "구분": ["A 등급 (Good)", "B 등급 (Satisfactory)", "C 등급 (Unsatisfactory)", "D 등급 (Unacceptable)"],
-        "진동 속도 범위 (mm/s)": ["0.0 ~ 1.8 mm/s", "1.8 ~ 4.5 mm/s", "4.5 ~ 11.2 mm/s", "11.2 mm/s 초과"],
-        "설비 상태": ["신규 설치 및 양호한 상태", "장기 운전 가능 상태", "조만간 정비 및 조치 필요", "즉시 정지 및 긴급 정비"]
-    }
-    st.table(pd.DataFrame(iso_data))
+with col3:
+    st.metric(
+        label="⚠️ 보수 필요 (C)", 
+        value=f"{repair_count} 건", 
+        delta="계획 정비 대상",
+        delta_color="off"
+    )
+
+with col4:
+    st.metric(
+        label="🚨 즉시 점검 (D)", 
+        value=f"{urgent_count} 건", 
+        delta="긴급 점검 필요",
+        delta_color="inverse"
+    )
+
+st.markdown("---")
+
+# ---------------------------------------------------------
+# 3. 상세 점검 이력 테이블
+# ---------------------------------------------------------
+st.subheader("📋 상세 점검 이력")
+
+# 판정 결과별 강조 스타일 적용 함수
+def highlight_status(val):
+    val_str = str(val)
+    if "D" in val_str or "즉시" in val_str or "긴급" in val_str:
+        return 'background-color: #FFCDD2; color: #B71C1C; font-weight: bold;'
+    elif "C" in val_str or "보수" in val_str:
+        return 'background-color: #FFE0B2; color: #E65100; font-weight: bold;'
+    elif "A" in val_str or "B" in val_str or "양호" in val_str:
+        return 'background-color: #C8E6C9; color: #1B5E20; font-weight: bold;'
+    return ''
+
+if "판정" in filtered_df.columns:
+    styled_df = filtered_df.style.applymap(highlight_status, subset=['판정'])
+    st.dataframe(styled_df, use_container_width=True, height=350)
+else:
+    st.dataframe(filtered_df, use_container_width=True, height=350)
