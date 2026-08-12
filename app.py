@@ -1,385 +1,283 @@
 import streamlit as st
 import pandas as pd
-import io
-import re
+import numpy as np
+import plotly.express as px
 import os
-import glob
+import io
 
-try:
-    import pdfplumber
-    HAS_PDF = True
-except ImportError:
-    HAS_PDF = False
-
-# PAGE CONFIG
+# 1. 페이지 기본 설정
 st.set_page_config(
-    page_title="부산환경공단 자재 단가 검증 시스템", 
-    layout="wide", 
-    page_icon="🌿",
-    initial_sidebar_state="expanded"
+    page_title="부산환경공단 회전기기 진동 관리 시스템",
+    page_icon="⚙️",
+    layout="wide"
 )
 
-# ----------------------------------------------------
-# 🎨 부산환경공단(BECO) 맞춤형 CSS 스타일링
-# ----------------------------------------------------
-st.markdown("""
-<style>
-    .main { background-color: #f8f9fa; }
-    .beco-header {
-        background: linear-gradient(135deg, #0f4c81 0%, #1e88e5 60%, #2e7d32 100%);
-        padding: 24px 28px;
-        border-radius: 12px;
-        color: white;
-        margin-bottom: 25px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-    }
-    .beco-header h1 { color: #ffffff !important; font-size: 26px !important; font-weight: 700 !important; margin-bottom: 6px !important; }
-    .beco-header p { color: #e0f2fe !important; font-size: 14px !important; margin: 0 !important; }
-    .custom-card {
-        background-color: #ffffff;
-        border-radius: 10px;
-        padding: 20px;
-        border: 1px solid #e9ecef;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-        margin-bottom: 15px;
-    }
-    .quote-box {
-        background-color: #ebf5ff;
-        border-left: 6px solid #1565c0;
-        padding: 12px 16px;
-        border-radius: 8px;
-        margin-top: 10px;
-        margin-bottom: 10px;
-    }
-    .quote-title { color: #0d47a1; font-weight: 700; font-size: 15px; }
-</style>
-""", unsafe_allow_html=True)
+# 2. 이미지 기준 18개 사업소/사업단 목록
+SITE_LIST = [
+    "수영사업단", "강변사업단", "남부사업소", "녹산사업소", "기장사업소",
+    "동부사업소", "중앙사업소", "영도사업소", "정관사업소", "서부사업소",
+    "관로사업소", "하수자원사업소", "위생사업소", "해운대사업단", "생곡사업단",
+    "명지사업소", "에너지사업소", "대기환경사업소"
+]
+
+DEFAULT_EXCEL_FILE = "설비점검 및 정비 관리대장(에너지사업소).xlsx"
+
+# 3. Session State (사업소별 데이터 저장소) 초기화
+if "site_data_store" not in st.session_state:
+    st.session_state["site_data_store"] = {}
 
 
-# ----------------------------------------------------
-# 🔔 물가정보/물가자료 미입력 팝업 (Modal Dialog)
-# ----------------------------------------------------
-@st.dialog("⚠️ 물가자료 및 물가정보 검토 알림")
-def show_missing_price_dialog():
-    st.warning("💡 **물가정보 및 물가자료 단가가 입력되지 않았습니다.**")
-    st.write("공인 단가지(물가정보, 물가자료 등)를 검토하셨는지 다시 한번 확인해 주세요.")
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("확인 및 검토 진행", use_container_width=True):
-        st.session_state['dialog_dismissed'] = True
-        st.rerun()
-
-
-# ----------------------------------------------------
-# 📦 사내 자재 DB 로드
-# ----------------------------------------------------
-@st.cache_data
-def load_bpm_data():
-    df = pd.read_excel('2025년 자재원본.xlsx', sheet_name='Data', header=2)
-    df = df[df['입고단가'].notnull() & (df['입고단가'] > 0)]
+# 4. D등급 최우선 판정 및 판정 컬럼 정제 함수
+def standardize_and_grade(df):
+    if df is None or df.empty:
+        return df
     
-    def calc_trimmed_stats(g):
-        prices = g['입고단가'].dropna().tolist()
-        prices.sort()
-        n = len(prices)
-        if n == 0:
-            return pd.Series({'이력건수': 0, '평균단가': 0, '최소단가': 0, '최대단가': 0, '절사적용': False})
-        min_p, max_p = prices[0], prices[-1]
-        if n >= 5:
-            avg_p = sum(prices[1:-1]) / len(prices[1:-1])
-            is_trimmed = True
+    # 기존 '판정' 또는 '등급' 관련 컬럼 찾기
+    status_col = next((c for c in df.columns if any(kw in str(c) for kw in ["판정", "등급", "상태", "Zone", "Grade"])), None)
+
+    def evaluate_row(row):
+        # 1) 기존 판정 컬럼에 D/C/A/B가 명시된 경우
+        if status_col and pd.notna(row[status_col]):
+            val = str(row[status_col]).strip().upper()
+            if any(k in val for k in ["D", "위험", "즉시", "4"]):
+                return "🔴 D (즉시점검)"
+            elif any(k in val for k in ["C", "주의", "보수", "3"]):
+                return "🟡 C (보수필요)"
+            elif any(k in val for k in ["A", "B", "양호", "정상", "1", "2"]):
+                return "🟢 A/B (양호)"
+
+        # 2) 판정 컬럼이 없거나 단순 문제점 기록인 경우 행 전체 텍스트 분석
+        row_text = " ".join([str(v) for v in row.values if pd.notna(v)]).strip()
+
+        # [최우선] D등급 심각 키워드 감지 (파손, 즉시, 위험, D)
+        d_keywords = ["파손", "즉시", "위험", "D등급", "ZONE D", "교체", "긴급", "불량"]
+        if any(k.upper() in row_text.upper() for k in d_keywords):
+            return "🔴 D (즉시점검)"
+
+        # C등급 일반 주의 키워드 감지
+        c_keywords = ["C등급", "ZONE C", "보수필요", "보수 필요", "주의", "진동", "분해정비", "이상"]
+        if any(k.upper() in row_text.upper() for k in c_keywords):
+            return "🟡 C (보수필요)"
+
+        return "🟢 A/B (양호)"
+
+    # 판정 컬럼 새로 적용
+    df["판정"] = df.apply(evaluate_row, axis=1)
+
+    # 보기 좋게 '판정' 컬럼을 '설비명' 바로 뒤(2번째)로 배치
+    cols = list(df.columns)
+    cols.remove("판정")
+    equip_idx = next((i for i, c in enumerate(cols) if "설비" in str(c)), 0)
+    cols.insert(equip_idx + 1, "판정")
+
+    return df[cols]
+
+
+# 5. 엑셀 데이터 정제 함수 (제목행 제거 및 유효 행 정제)
+def clean_excel_data(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    
+    # 1) '설비명' 단어가 포함된 실제 헤더 행 위치 찾기
+    header_idx = None
+    for idx in range(min(15, len(df))):
+        row_str_list = [str(val) for val in df.iloc[idx].tolist()]
+        if any("설비명" in val for val in row_str_list):
+            header_idx = idx
+            break
+            
+    # 2) 헤더 위치 지정 및 상단 비어있는 행 삭제
+    if header_idx is not None:
+        raw_headers = df.iloc[header_idx].tolist()
+        new_cols = []
+        for i, h in enumerate(raw_headers):
+            h_str = str(h).strip() if pd.notna(h) and str(h).lower() != "nan" else f"Unused_{i}"
+            new_cols.append(h_str)
+        
+        df = df.iloc[header_idx + 1:].copy()
+        df.columns = new_cols
+
+    # 3) '설비명' 컬럼 기준 유효 데이터만 정제
+    equip_col = next((c for c in df.columns if "설비명" in str(c)), None)
+    if equip_col:
+        mask = df[equip_col].apply(lambda x: pd.notna(x) and str(x).strip().lower() not in ["none", "nan", "", "설비명"])
+        df = df[mask]
+        
+    df = df.reset_index(drop=True)
+    
+    # 4) D등급 최우선 자동 판정 처리
+    return standardize_and_grade(df)
+
+
+# 6. 실무 필수 항목 중심의 샘플 엑셀 양식 생성
+def generate_template_excel():
+    sample_df = pd.DataFrame({
+        "설비명": ["FD Fan #1", "FD Fan #2", "보일러 급수펌프 #1", "보일러 급수펌프 #2"],
+        "판정": ["🔴 D (즉시점검)", "🟢 A/B (양호)", "🟡 C (보수필요)", "🔴 D (즉시점검)"],
+        "점검일자": ["2026-04-22", "2026-04-22", "2026-04-23", "2026-04-23"],
+        "문제점": ["전동기 진동", "정상", "진동 발생", "전동기, 펌프 진동"],
+        "원인분석": ["베어링 파손", "-", "소음 수치 상승", "베어링 파손"],
+        "조치사항": ["분해정비 및 베어링 교체", "-", "오일 주입 및 구리스 보충", "분해정비"],
+        "진동속도(mm/s)": [7.8, 1.1, 3.2, 8.5]
+    })
+    
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        sample_df.to_excel(writer, index=False, sheet_name='진동점검대장')
+    return output.getvalue()
+
+
+# 7. 사이드바 구성
+with st.sidebar:
+    st.title("📌 메뉴 (Navigation)")
+    
+    menu_type = st.radio(
+        "구분 선택",
+        [
+            "🏢 사업소별 설비 현황 및 이력", 
+            "📂 데이터 업로드 및 양식 다운로드",
+            "📏 진동 측정 기준 (ISO 10816)"
+        ]
+    )
+    
+    st.markdown("---")
+    selected_site = st.selectbox("🏢 사업소 선택", SITE_LIST, index=16)
+    st.markdown("---")
+    st.caption("부산환경공단 회전기기 진동 관리 시스템 v1.4")
+
+
+# 8. 기본 데이터 로드 (에너지사업소 파일)
+current_df = pd.DataFrame()
+
+if selected_site in st.session_state["site_data_store"]:
+    current_df = st.session_state["site_data_store"][selected_site]
+elif selected_site == "에너지사업소" and os.path.exists(DEFAULT_EXCEL_FILE):
+    try:
+        raw_df = pd.read_excel(DEFAULT_EXCEL_FILE)
+        current_df = clean_excel_data(raw_df)
+        st.session_state["site_data_store"]["에너지사업소"] = current_df
+    except Exception as e:
+        current_df = pd.DataFrame()
+
+
+# 9. 메인 화면 구성
+# ==========================================
+# 메뉴 1: 🏢 사업소별 설비 현황 및 이력
+# ==========================================
+if menu_type == "🏢 사업소별 설비 현황 및 이력":
+    st.info(f"🏢 현재 선택된 사업소: **{selected_site}**")
+    st.title(f"📜 [{selected_site}] 설비별 진동 점검 이력 및 현황")
+    st.caption("부산환경공단 소속 회전기기 진동 상태 측정 데이터 관리 시스템")
+    
+    if current_df.empty:
+        st.warning(f"💡 [{selected_site}]에 등록된 진동 점검 데이터가 없습니다.")
+        st.info("👈 메뉴에서 **'📂 데이터 업로드 및 양식 다운로드'**로 이동하여 파일을 등록해 주세요.")
+    else:
+        # 건수 집계 (D등급 / C등급 / A,B등급 정확 분리)
+        total_cnt = len(current_df)
+        status_series = current_df["판정"].astype(str) if "판정" in current_df.columns else pd.Series([])
+
+        danger_cnt = len(current_df[status_series.str.contains("D|즉시", case=False, na=False)])
+        warning_cnt = len(current_df[status_series.str.contains("C|보수", case=False, na=False)])
+        good_cnt = total_cnt - danger_cnt - warning_cnt
+
+        # 상단 요약 카운트 카드
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("📊 전체 점검 설비", f"{total_cnt} 건")
+        c2.metric("✅ 양호 (A/B)", f"{good_cnt} 건")
+        c3.metric("⚠️ 보수 필요 (C)", f"{warning_cnt} 건")
+        c4.metric("🚨 즉시 점검 (D)", f"{danger_cnt} 건")
+        
+        st.markdown("---")
+
+        # 🚨 D등급 및 C등급 이상 설비 필터링
+        issue_df = current_df[status_series.str.contains("D|C|즉시|보수", case=False, na=False)]
+
+        if not issue_df.empty:
+            st.error(f"⚠️ **[{selected_site}] 점검/보수 필요 이상 설비 ({len(issue_df)}건 - D등급: {danger_cnt}건, C등급: {warning_cnt}건)**")
+            st.dataframe(issue_df, use_container_width=True, hide_index=True)
+            st.markdown("---")
         else:
-            avg_p = sum(prices) / n
-            is_trimmed = False
-            
-        return pd.Series({
-            '이력건수': n, '평균단가': round(avg_p), '최소단가': min_p, '최대단가': max_p, '절사적용': is_trimmed
-        })
+            st.success("🎉 현재 보수 및 점검이 필요한 이상 설비가 없습니다.")
+            st.markdown("---")
 
-    stats = df.groupby(['자재명', '자재규격'], group_keys=False).apply(calc_trimmed_stats).reset_index()
-    stats['검색용'] = stats['자재명'].astype(str) + " | " + stats['자재규격'].astype(str)
-    return stats
-
-
-# ----------------------------------------------------
-# 📚 폴더 내 물가지 PDF 전체 자동 색인 및 캐싱
-# ----------------------------------------------------
-@st.cache_data
-def load_and_index_reference_pdfs():
-    """같은 폴더에 있는 모든 종합물가정보 PDF 텍스트를 미리 읽어서 캐시합니다."""
-    pdf_files = glob.glob("종합물가정보*.pdf") + glob.glob("*.pdf")
-    pdf_files = sorted(list(set(pdf_files)))
-    
-    indexed_data = []
-    if not HAS_PDF or not pdf_files:
-        return indexed_data
-    
-    for f_path in pdf_files:
-        # 사내 DB 파일은 제외
-        if '2025년 자재원본' in f_path:
-            continue
-        try:
-            file_name = os.path.basename(f_path)
-            with pdfplumber.open(f_path) as pdf:
-                for page_num, page in enumerate(pdf.pages, 1):
-                    text = page.extract_text()
-                    if text:
-                        for line in text.split('\n'):
-                            clean_line = line.strip()
-                            if clean_line:
-                                indexed_data.append({
-                                    'file': file_name,
-                                    'page': page_num,
-                                    'text': clean_line
-                                })
-        except Exception:
-            continue
-            
-    return indexed_data
-
-
-# ----------------------------------------------------
-# 🔍 스마트 키워드 토큰 기반 검색 함수
-# ----------------------------------------------------
-def search_in_indexed_pdfs(target_material, target_spec):
-    indexed_lines = load_and_index_reference_pdfs()
-    if not indexed_lines:
-        return []
-
-    # 검색어 토큰화 (예: '게이트밸브', '주철, 80A10k' -> ['게이트', '밸브', '주철', '80A', '10K'])
-    raw_str = f"{target_material} {target_spec}"
-    tokens = [t.upper() for t in re.findall(r'[가-힣a-zA-Z0-9]+', raw_str) if len(t) >= 2 or t.isdigit()]
-    
-    candidates = []
-    for item in indexed_lines:
-        line_upper = item['text'].upper()
+        # 📋 전체 설비 대장 (불필요한 차기점검일 등 수식 열만 정제)
+        st.subheader("📋 전체 설비 점검 이력 대장")
+        ignore_keywords = ["차기점검일", "점검계획", "점검내역", "예방정비내역", "Unused"]
+        filtered_cols = [c for c in current_df.columns if not any(kw in str(c) for kw in ignore_keywords)]
         
-        # 토큰 포함 개수 측정
-        match_count = sum(1 for token in tokens if token in line_upper)
+        st.dataframe(current_df[filtered_cols], use_container_width=True, hide_index=True)
+
+
+# ==========================================
+# 메뉴 2: 📂 데이터 업로드 및 양식 다운로드
+# ==========================================
+elif menu_type == "📂 데이터 업로드 및 양식 다운로드":
+    st.title("📂 데이터 업로드 및 간소화 양식 안내")
+    st.caption("사업소별 실무에 꼭 필요한 항목만으로 구성된 점검 대장을 등록합니다.")
+    st.markdown("---")
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        st.subheader("1️⃣ 간소화 표준 양식 다운로드")
+        st.markdown("""
+        D/C/A/B 등급이 명확히 표출되는 **표준 7개 항목** 서식입니다.
         
-        # 2개 이상 토큰이 일치하거나, 토큰이 적은 경우 최소 1개 일치 시
-        if match_count >= 2 or (len(tokens) < 2 and match_count >= 1):
-            # 단가 숫출 (100원 초과)
-            numbers = re.findall(r'\b\d{1,3}(?:,\d{3})+\b|\b\d{4,9}\b', item['text'])
-            clean_nums = []
-            for n in numbers:
-                val = int(n.replace(',', ''))
-                if val >= 500: # 의미 있는 최소 단가 기준
-                    clean_nums.append(val)
-            
-            if clean_nums:
-                # 파일명 단순화 (예: 종합물가정보 2026년 08월호-기계.pdf -> 기계)
-                short_fname = re.sub(r'종합물가정보.*?-', '', item['file']).replace('.pdf', '')
-                if short_fname == item['file']:
-                    short_fname = item['file'][:15]
-                    
-                candidates.append({
-                    'title': f"📄 [{short_fname} {item['page']}p] {item['text']}",
-                    'price': clean_nums[0],
-                    'score': match_count
-                })
-
-    # 적합도 높은 순 정렬
-    candidates.sort(key=lambda x: (x['score'], x['price']), reverse=True)
-    
-    # 중복 제거
-    seen = set()
-    unique_candidates = []
-    for c in candidates:
-        key = (c['title'], c['price'])
-        if key not in seen:
-            seen.add(key)
-            unique_candidates.append(c)
-            
-    return unique_candidates[:5]
-
-
-try:
-    stats_df = load_bpm_data()
-
-    # 상단 헤더
-    st.markdown("""
-    <div class="beco-header">
-        <h1>🌿 부산환경공단 (BECO) 자재 단가 검증 시스템</h1>
-        <p>자재 수불 이력 기반 공정·투명 계약지원 시스템 | 기술개발 및 단가심사 자동화</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # 사이드바
-    st.sidebar.markdown("## 🌿 BECO 메뉴")
-    page = st.sidebar.radio("기능을 선택하세요", ["🔍 단 품목 단가 검증", "📄 업체 견적서 일괄 검토", "📊 자재 데이터 분석"])
-    st.sidebar.caption("DB 기준: 자재 실시간 입고이력")
-    st.sidebar.markdown("---")
-    
-    # 감지된 물가지 파일 현황 표시
-    indexed_pdfs = list(set([item['file'] for item in load_and_index_reference_pdfs()]))
-    st.sidebar.markdown("### 📚 참조 물가지 DB 현황")
-    if indexed_pdfs:
-        st.sidebar.success(f"총 {len(indexed_pdfs)}개 물가지 PDF 자동 로드 완료")
-        with st.sidebar.expander("로드된 파일 목록 보기"):
-            for f_name in indexed_pdfs:
-                st.write(f"• {f_name}")
-    else:
-        st.sidebar.warning("폴더 내 물가지 PDF 파일이 없습니다.")
-
-    # ====================================================
-    # 🌟 PAGE 1: 단 품목 단가 검증
-    # ====================================================
-    if page == "🔍 단 품목 단가 검증":
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("### ⭐ 다빈도 구매 자재 (TOP 30)")
-        top30_df = stats_df.sort_values(by='이력건수', ascending=False).head(30)
-        selected_from_sidebar = st.sidebar.selectbox("목록에서 빠른 선택", top30_df['검색용'].tolist())
-
-        # 검색 영역
-        st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-        c_search1, c_search2 = st.columns([1.5, 1.5])
-        with c_search1:
-            search_kw = st.text_input("🔍 자재명 또는 규격 검색", "", placeholder="예: 게이트밸브, 볼밸브, 80A").strip()
+        * **필수 항목**: `설비명`, `판정`, `점검일자`, `문제점`
+        * **권장 항목**: `원인분석`, `조치사항`, `진동속도(mm/s)`
+        """)
         
-        with c_search2:
-            if search_kw:
-                search_filtered = stats_df[stats_df['검색용'].str.contains(search_kw, case=False, na=False)]
-                if len(search_filtered) > 0:
-                    selected_item = st.selectbox(f"검색 결과 ({len(search_filtered)}건)", search_filtered['검색용'].tolist())
-                else:
-                    st.warning("일치하는 자재가 없습니다. TOP 30 항목으로 설정됩니다.")
-                    selected_item = selected_from_sidebar
-            else:
-                selected_item = selected_from_sidebar
-                st.selectbox("선택 자재 (TOP 30 연동)", [selected_item], disabled=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        excel_bytes = generate_template_excel()
+        st.download_button(
+            label="📥 표준 엑셀 양식 다운로드 (.xlsx)",
+            data=excel_bytes,
+            file_name="회전기기_진동점검대장_표준양식.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
-        target_data = stats_df[stats_df['검색용'] == selected_item].iloc[0]
-        selected_material = target_data['자재명']
-        selected_spec = target_data['자재규격']
-        bpm_count = int(target_data['이력건수'])
-        bpm_avg = int(target_data['평균단가'])
-        bpm_max = int(target_data['최대단가'])
-        bpm_min = int(target_data['최소단가'])
-        is_trimmed = bool(target_data['절사적용'])
+    with col2:
+        st.subheader(f"2️⃣ [{selected_site}] 데이터 파일 업로드")
+        uploaded_file = st.file_uploader(f"[{selected_site}] 전용 점검대장 업로드 (CSV/XLSX)", type=["csv", "xlsx"])
 
-        st.markdown(f"### 📦 선택 품목: **[{selected_material}]** `({selected_spec})`")
-        
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("사내 구매 이력", f"{bpm_count:,} 건")
-        m2.metric("사내 평균 단가" + (" (절사평균)" if is_trimmed else ""), f"{bpm_avg:,.0f} 원")
-        m3.metric("과거 최저 단가", f"{bpm_min:,.0f} 원")
-        m4.metric("과거 최고 단가", f"{bpm_max:,.0f} 원")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # 🔍 로컬 PDF 내 유사 항목 자동 탐색
-        smart_hits = search_in_indexed_pdfs(selected_material, selected_spec)
-        auto_selected_price = 0
-
-        if smart_hits:
-            st.markdown('<div class="custom-card" style="border-left: 5px solid #2e7d32;">', unsafe_allow_html=True)
-            st.markdown("#### 💡 참조 물가지 내 유사 규격/단가 검색 결과 (자동 추천)")
-            hit_options = [f"{item['title']} ➔ [{item['price']:,}원]" for item in smart_hits]
-            hit_options.insert(0, "선택 안 함 (직접 입력)")
-            
-            selected_hit = st.selectbox("가장 적합한 물가지 항목을 선택하시면 단가에 자동 입력됩니다.", hit_options)
-            if selected_hit != "선택 안 함 (직접 입력)":
-                hit_idx = hit_options.index(selected_hit) - 1
-                auto_selected_price = smart_hits[hit_idx]['price']
-                st.success(f"선택한 물가정보 단가 **{auto_selected_price:,.0f}원**이 물가정보 단가란에 자동 반영되었습니다.")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        # 비교 단가 입력 레이아웃
-        col_input, col_result = st.columns([1, 1.2])
-        
-        with col_input:
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("#### 💳 비교 단가 입력")
-            
-            with st.form(key='price_input_form'):
-                price_info = st.number_input("📑 물가정보 공인 단가 (원)", min_value=0, value=auto_selected_price, step=1000)
-                price_data = st.number_input("📑 물가자료 공인 단가 (원)", min_value=0, value=0, step=1000)
+        if uploaded_file is not None:
+            try:
+                raw_df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+                cleaned_df = clean_excel_data(raw_df)
+                st.session_state["site_data_store"][selected_site] = cleaned_df
+                st.success(f"🎉 [{selected_site}] 데이터 {len(cleaned_df)}건이 성공적으로 등록되었습니다!")
                 
-                if price_info == 0 and price_data == 0:
-                    st.info("💡 **물가정보 및 물가자료는 검토하셨습니까?** (미입력 상태)")
+                st.markdown("##### 🔍 업로드 데이터 미리보기")
+                st.dataframe(cleaned_df.head(5), use_container_width=True)
+            except Exception as e:
+                st.error(f"❌ 파일 업로드 중 오류가 발생했습니다: {e}")
 
-                st.markdown("""
-                <div class="quote-box">
-                    <div class="quote-title">🟦 구매 / 견적 예정 단가 (검토 대상)</div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                price_quote = st.number_input("구매견적가 입력 (원)", min_value=0, value=bpm_avg, step=1000, label_visibility="collapsed")
-                submit_button = st.form_submit_button("🔍 단가 검토 및 팝업 확인 (Enter)", use_container_width=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            if submit_button:
-                if price_quote > 0 and price_info == 0 and price_data == 0:
-                    show_missing_price_dialog()
-
-        with col_result:
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("#### 🎯 적정성 종합 판정 결과")
-            
-            if price_quote == 0:
-                st.info("검토할 구매견적 단가를 입력해 주세요.")
-            else:
-                st.markdown(f"##### 🟦 **검토 구매견적가: <span style='color:#1565C0; font-size:22px;'>{price_quote:,.0f}원</span>**", unsafe_allow_html=True)
-                st.markdown("---")
-                
-                # 사내 이력 비교
-                diff_bpm = price_quote - bpm_avg
-                rate_bpm = (diff_bpm / bpm_avg) * 100
-                if price_quote <= bpm_avg:
-                    st.success(f"🟢 **[사내 이력 대비]** 평균가({bpm_avg:,.0f}원) 대비 **{abs(rate_bpm):.1f}% 저렴 (적정)**")
-                elif price_quote <= bpm_max:
-                    st.warning(f"🟡 **[사내 이력 대비]** 평균가 대비 **{rate_bpm:.1f}% 높음** (과거 최고가 이내)")
-                else:
-                    st.error(f"🔴 **[사내 이력 대비]** 과거 최고가({bpm_max:,.0f}원) 초과 **(고가 주의)**")
-
-                # 물가정보 비교
-                if price_info > 0:
-                    diff_info = price_quote - price_info
-                    rate_info = (diff_info / price_info) * 100
-                    if price_quote <= price_info:
-                        st.success(f"🟢 **[물가정보]** 공인가({price_info:,.0f}원) 대비 **{abs(rate_info):.1f}% 저렴 (적정)**")
-                    else:
-                        st.error(f"🔴 **[물가정보]** 공인가({price_info:,.0f}원) 대비 **{rate_info:.1f}% 비쌈**")
-
-                # 물가자료 비교
-                if price_data > 0:
-                    diff_data = price_quote - price_data
-                    rate_data = (diff_data / price_data) * 100
-                    if price_quote <= price_data:
-                        st.success(f"🟢 **[물가자료]** 공인가({price_data:,.0f}원) 대비 **{abs(rate_data):.1f}% 저렴 (적정)**")
-                    else:
-                        st.error(f"🔴 **[물가자료]** 공인가({price_data:,.0f}원) 대비 **{rate_data:.1f}% 비쌈**")
-
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.subheader("📊 단가 데이터 종합 비교 차트 및 표")
-        
-        comp_data = {
-            "구분": ["사내 최저가", f"사내 평균가 ({bpm_count}건)", "사내 최고가", "물가정보 단가", "물가자료 단가", "🟦 구매견적가"],
-            "단가 (원)": [bpm_min, bpm_avg, bpm_max, price_info, price_data, price_quote]
-        }
-        comp_df = pd.DataFrame(comp_data)
-        tbl_col, chart_col = st.columns([1, 1.2])
-        
-        with tbl_col:
-            disp_df = comp_df.copy()
-            disp_df["단가"] = disp_df["단가 (원)"].apply(lambda x: f"{x:,.0f}원" if x > 0 else "미입력")
-            st.table(disp_df[["구분", "단가"]])
-            
-        with chart_col:
-            chart_df = comp_df[comp_df["단가 (원)"] > 0].set_index("구분")
-            st.bar_chart(chart_df)
-
-    # PAGE 2 & 3
-    elif page == "📄 업체 견적서 일괄 검토":
-        st.subheader("📄 업체 제출 견적서 자동 일괄 검토")
-        st.caption("업체에서 제출한 엑셀 견적서를 업로드하면, 공단 사내 단가 DB와 비교하여 적정성을 검토합니다.")
-        
-    else:
-        st.subheader("📊 사내 자재 현황 및 데이터 분석")
-
-except Exception as e:
-    st.error(f"시스템 오류 발생: {e}")
+# ==========================================
+# 메뉴 3: 📏 진동 측정 기준 (ISO 10816)
+# ==========================================
+elif menu_type == "📏 진동 측정 기준 (ISO 10816)":
+    st.title("📏 ISO 10816 회전기기 진동 평가 기준")
+    st.markdown("ISO 10816-3 표준은 산업용 회전기기의 진동 속도 실효값(RMS, mm/s)을 기준으로 설비의 건전성을 4단계로 평가합니다.")
+    st.markdown("---")
+    
+    z1, z2, z3, z4 = st.columns(4)
+    z1.success("🟢 **영역 A (Zone A)**\n\n신규 설치 또는 정비 직후의 우수한 상태")
+    z2.info("🔵 **영역 B (Zone B)**\n\n장기 운전이 허용되는 양호한 상태")
+    z3.warning("🟡 **영역 C (Zone C)**\n\n장기 운전 불가, 조만간 보수/정비 필요")
+    z4.error("🔴 **영역 D (Zone D)**\n\n설비 손상 위험, 즉시 운전 정지 및 점검")
+    
+    st.markdown("---")
+    st.subheader("📊 ISO 10816-3 진동 속도 기준표 (RMS mm/s)")
+    
+    iso_data = {
+        "진동 구역 (Zone)": ["Zone A (우수)", "Zone B (양호)", "Zone C (보수필요)", "Zone D (위험/정지)"],
+        "그룹 1: 대형 기기 (>300kW) [강성 기초]": ["< 2.3 mm/s", "2.3 ~ 4.5 mm/s", "4.5 ~ 7.1 mm/s", "> 7.1 mm/s"],
+        "그룹 1: 대형 기기 (>300kW) [연성 기초]": ["< 3.5 mm/s", "3.5 ~ 7.1 mm/s", "7.1 ~ 11.0 mm/s", "> 11.0 mm/s"],
+        "그룹 2: 중형 기기 (15kW~300kW) [강성 기초]": ["< 1.4 mm/s", "1.4 ~ 2.8 mm/s", "2.8 ~ 4.5 mm/s", "> 4.5 mm/s"],
+        "그룹 2: 중형 기기 (15kW~300kW) [연성 기초]": ["< 2.3 mm/s", "2.3 ~ 4.5 mm/s", "4.5 ~ 7.1 mm/s", "> 7.1 mm/s"],
+    }
+    
+    iso_df = pd.DataFrame(iso_data)
+    st.table(iso_df)
