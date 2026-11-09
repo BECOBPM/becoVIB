@@ -131,6 +131,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <i class="fa-solid fa-building-circle-plus"></i>
           <span>사업소 추가</span>
         </button>
+        <!-- Add Period Button -->
+        <button onclick="openAddPeriodModal()" class="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs sm:text-sm font-medium py-2 px-3 rounded-lg transition duration-200 shadow">
+          <i class="fa-solid fa-calendar-plus"></i>
+          <span>측정주기 추가</span>
+        </button>
         <!-- Add Equipment Button -->
         <button onclick="openAddModal()" class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-medium py-2 px-3 rounded-lg transition duration-200 shadow">
           <i class="fa-solid fa-plus"></i>
@@ -149,13 +154,22 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Office / Plant Switcher Bar -->
+    <!-- Office / Plant Switcher Bar & Period Selector -->
     <div class="max-w-7xl mx-auto mt-3 pt-3 border-t border-slate-700/60 flex items-center justify-between flex-wrap gap-2">
       <div class="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0" id="officeTabs">
         <!-- Rendered dynamically by renderOfficeTabs() -->
       </div>
 
-      <div class="flex items-center gap-2 text-xs text-slate-400">
+      <div class="flex items-center gap-3 text-xs text-slate-400">
+        <!-- Period Selector -->
+        <div class="flex items-center gap-1.5 bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700">
+          <i class="fa-regular fa-calendar-check text-cyan-400"></i>
+          <span class="text-slate-300 font-medium">측정 시기:</span>
+          <select id="periodFilterDropdown" onchange="switchPeriod(this.value)" class="bg-slate-900 border border-slate-700 text-cyan-300 text-xs font-bold rounded px-2 py-0.5 focus:outline-none">
+            <!-- Dynamically Rendered -->
+          </select>
+        </div>
+
         <span id="currentOfficeLabel" class="font-bold text-white bg-slate-800 px-2.5 py-1 rounded border border-slate-700">전체 사업소 현황</span>
         <button onclick="exportToCSV()" class="hover:text-cyan-400 transition ml-1" title="현재 조회 데이터 CSV 내보내기">
           <i class="fa-solid fa-file-export mr-1"></i>내보내기
@@ -243,30 +257,48 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <!-- ISO Criteria & Visual Chart Panel -->
     <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       
-      <!-- Chart Column (2 cols) -->
-      <div class="lg:col-span-2 glass-card rounded-xl p-5 border border-slate-700/60">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-700/60 gap-2">
+      <!-- Chart Column (2 cols) with Mode Tabs (Current Bar vs Historical Trend Line) -->
+      <div class="lg:col-span-2 glass-card rounded-xl p-5 border border-slate-700/60 flex flex-col justify-between">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-700/60 gap-3">
           <div>
-            <h2 class="text-base font-semibold text-white flex items-center gap-2">
-              <i class="fa-solid fa-chart-simple text-cyan-400"></i>
-              설비별 최대 진동치(RMS) 및 관리 임계 현황
-            </h2>
-            <p class="text-xs text-slate-400">주요 대상 설비의 실측 진동값 vs ISO 20816-3 경보 기준 비교</p>
+            <div class="flex items-center gap-2">
+              <h2 class="text-base font-semibold text-white flex items-center gap-2" id="chartMainTitle">
+                <i class="fa-solid fa-chart-line text-cyan-400"></i>
+                설비 진동치 상태 및 시계열 추이 분석
+              </h2>
+            </div>
+            <p class="text-xs text-slate-400" id="chartSubTitle">측정 주기별 진동 추세를 선 그래프로 관찰하여 이상 징후 조기 포착</p>
           </div>
-          <div class="flex items-center gap-2">
-            <span class="inline-flex items-center gap-1.5 text-xs text-slate-300">
-              <span class="w-2.5 h-2.5 rounded-sm bg-red-500"></span> D위험치
-            </span>
-            <span class="inline-flex items-center gap-1.5 text-xs text-slate-300">
-              <span class="w-2.5 h-2.5 rounded-sm bg-amber-400"></span> C주의치
-            </span>
-            <span class="inline-flex items-center gap-1.5 text-xs text-slate-300">
-              <span class="w-2.5 h-2.5 rounded-sm bg-cyan-400"></span> 실측RMS
-            </span>
+          
+          <!-- View Toggle Buttons -->
+          <div class="flex items-center gap-2 bg-slate-900/90 p-1 rounded-lg border border-slate-700 text-xs">
+            <button id="btnViewTrend" onclick="setChartViewMode('trend')" class="px-2.5 py-1 rounded-md font-bold bg-cyan-600 text-white transition flex items-center gap-1.5 shadow">
+              <i class="fa-solid fa-arrow-trend-up text-[11px]"></i>
+              <span>반기별 추이선 (Trend)</span>
+            </button>
+            <button id="btnViewBar" onclick="setChartViewMode('bar')" class="px-2.5 py-1 rounded-md text-slate-400 hover:text-white transition flex items-center gap-1.5">
+              <i class="fa-solid fa-chart-simple text-[11px]"></i>
+              <span>현재 주기 비교 (Bar)</span>
+            </button>
           </div>
         </div>
 
-        <div class="pt-4 h-[280px] w-full">
+        <!-- Trend Controls (Only visible in Trend mode) -->
+        <div id="trendFilterBar" class="py-2.5 flex items-center justify-between flex-wrap gap-2 text-xs border-b border-slate-800">
+          <div class="flex items-center gap-2">
+            <span class="text-slate-400 font-medium"><i class="fa-solid fa-filter text-cyan-400 mr-1"></i>추이선 대상 설비:</span>
+            <select id="trendEquipSelect" onchange="renderChart()" class="bg-slate-800 border border-slate-700 text-slate-200 rounded px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer">
+              <option value="ALL">상위 주요 위험/주의 설비 전체 비교 (Top 5)</option>
+              <!-- Filled dynamically with equipment list -->
+            </select>
+          </div>
+          <div class="flex items-center gap-3 text-[11px] text-slate-400">
+            <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-red-400 border border-dashed border-red-500 inline-block"></span> D(즉시점검 4.5/7.1)</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-amber-400 border border-dashed border-amber-500 inline-block"></span> C(보수필요 2.8/4.5)</span>
+          </div>
+        </div>
+
+        <div class="pt-4 h-[290px] w-full">
           <canvas id="vibrationChart"></canvas>
         </div>
       </div>
@@ -392,6 +424,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <table class="w-full text-left border-collapse text-xs">
           <thead>
             <tr class="bg-slate-800/80 text-slate-400 border-b border-slate-700 text-[11px] uppercase tracking-wider font-semibold">
+              <th class="py-3 px-3">측정시기</th>
               <th class="py-3 px-3">사업소</th>
               <th class="py-3 px-4">설비명</th>
               <th class="py-3 px-3">정격용량</th>
@@ -411,7 +444,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     </section>
   </main>
 
-  <!-- MODAL 1: Add Custom Equipment with Realtime ISO Evaluation -->
+  <!-- MODAL 1: Add Custom Equipment with Period & Realtime ISO Evaluation -->
   <div id="addModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
     <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-xl rounded-2xl shadow-2xl p-6 relative max-h-[92vh] overflow-y-auto custom-scrollbar">
       <button onclick="closeAddModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white transition">
@@ -424,12 +457,20 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         </div>
         <div>
           <h3 class="text-base font-bold text-white">신규 설비 직접 등록</h3>
-          <p class="text-xs text-slate-400">용량(kW) 입력 시 ISO 20816-3 그룹 및 진단 등급이 실시간 자동 산출됩니다.</p>
+          <p class="text-xs text-slate-400">측정 시기 및 용량(kW) 입력 시 ISO 20816-3 등급이 자동 산출됩니다.</p>
         </div>
       </div>
 
       <form id="addEquipForm" onsubmit="handleEquipmentSubmit(event)" class="space-y-4 text-xs">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <!-- 측정 시기 선택 -->
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">측정 시기 <span class="text-rose-400">*</span></label>
+            <select id="inpPeriod" required class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-cyan-300 font-bold focus:outline-none focus:ring-2 focus:ring-cyan-500">
+              <!-- Dynamically Rendered -->
+            </select>
+          </div>
+
           <!-- 사업소 선택 -->
           <div>
             <label class="block text-slate-300 font-medium mb-1">소속 사업소 <span class="text-rose-400">*</span></label>
@@ -508,6 +549,40 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- MODAL: Add New Measurement Period -->
+  <div id="addPeriodModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-md rounded-2xl shadow-2xl p-6 relative">
+      <button onclick="closeAddPeriodModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white transition">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-5 border-b border-slate-700 pb-3">
+        <div class="h-10 w-10 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/40 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-calendar-plus"></i>
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-white">신규 측정 주기 추가</h3>
+          <p class="text-xs text-slate-400">데이터를 누적 관리할 신규 반기/분기 주기를 등록합니다.</p>
+        </div>
+      </div>
+
+      <form id="addPeriodForm" onsubmit="handlePeriodSubmit(event)" class="space-y-4 text-xs">
+        <div>
+          <label class="block text-slate-300 font-medium mb-1">측정 주기 명칭 <span class="text-rose-400">*</span></label>
+          <input type="text" id="inpPeriodName" required placeholder="예: 2026년 하반기, 2027년 상반기" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500">
+        </div>
+        <p class="text-[11px] text-slate-400 leading-relaxed">
+          * 주기를 등록하면 상단 시기 선택 탭, 설비 등록창, 엑셀 템플릿에 자동 반영되어 반기별 시계열 데이터가 누적됩니다.
+        </p>
+
+        <div class="pt-3 border-t border-slate-700 flex justify-end gap-2">
+          <button type="button" onclick="closeAddPeriodModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-medium transition">취소</button>
+          <button type="submit" class="px-5 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-lg transition shadow-md">측정주기 생성</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- MODAL 2: Excel & CSV File Upload with Auto Parsing -->
   <div id="uploadModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
     <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-lg rounded-2xl shadow-2xl p-6 relative">
@@ -526,11 +601,19 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       </div>
 
       <div class="space-y-4 text-xs">
+        <!-- Target Period Selector for Upload -->
+        <div class="p-3 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-between">
+          <span class="font-medium text-slate-300">업로드 대상 측정시기:</span>
+          <select id="uploadPeriodSelect" class="bg-slate-900 border border-slate-600 rounded px-2.5 py-1 text-cyan-300 font-bold focus:outline-none">
+            <!-- Dynamically populated -->
+          </select>
+        </div>
+
         <!-- Template Download Guide -->
         <div class="p-3 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-between">
           <div>
             <span class="font-bold text-slate-200 block">표준 업로드 양식 템플릿</span>
-            <span class="text-slate-400 text-[11px]">열 구성: 사업소, 설비명, 용량kW, 실측RMS, 진단요약, 조치계획</span>
+            <span class="text-slate-400 text-[11px]">열 구성: 사업소, 설비명, 용량kW, 실측RMS, 진단요약, 조치계획, 측정시기(선택)</span>
           </div>
           <button onclick="downloadSampleTemplate()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-cyan-300 rounded-lg font-medium border border-slate-600 transition flex items-center gap-1.5">
             <i class="fa-solid fa-download"></i>
@@ -695,7 +778,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- Detail Equipment Modal -->
+  <!-- Detail Equipment Modal with Historical Trend Line -->
   <div id="detailModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
     <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-2xl shadow-2xl p-6 relative max-h-[90vh] overflow-y-auto custom-scrollbar">
       <button onclick="closeDetailModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white transition">
@@ -710,12 +793,24 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
   <!-- Scripts -->
   <script>
-    // Master Multi-Office Equipment Dataset
+    // Registered Measurement Periods (Ordered Chronologically)
+    let periodList = [
+      '2025년 상반기',
+      '2025년 하반기',
+      '2026년 상반기',
+      '2026년 하반기'
+    ];
+
+    let currentPeriod = '2026년 상반기'; // Default Period
+    let chartViewMode = 'trend'; // 'trend' (시계열 추이선) or 'bar' (현재 주기 막대)
+
+    // Master Multi-Office Equipment Dataset with Historical Time-Series
     let equipmentData = [
       // 1. 에너지사업소
       {
         id: 'fd_fan',
         office: '에너지사업소',
+        period: '2026년 상반기',
         name: '강제송풍기 (FD Fan)',
         power: 310,
         group: 'G1',
@@ -727,6 +822,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '#1, #4',
         overallGrade: 'D',
         maxRms: 7.3,
+        history: { '2025년 상반기': 3.8, '2025년 하반기': 4.9, '2026년 상반기': 7.3, '2026년 하반기': null },
         summary: '#1 : 전동기 진동, #4 : 송풍기 진동 심각',
         action: '#1, #4 전동기 및 팬 베어링 분해정비 요망',
         detailNotes: '310kW 대용량 보일러 연소용 송풍기로 연속 운전 중. #1호기는 구동측 베어링 진동, #4호기는 임펠러 불평형(Unbalance) 의심.'
@@ -734,6 +830,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       {
         id: 'boiler_feed',
         office: '에너지사업소',
+        period: '2026년 상반기',
         name: '보일러 급수펌프',
         power: 95,
         group: 'G2',
@@ -745,6 +842,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '-',
         overallGrade: 'C',
         maxRms: 3.9,
+        history: { '2025년 상반기': 2.1, '2025년 하반기': 2.7, '2026년 상반기': 3.9, '2026년 하반기': null },
         summary: '#2 : 전동기/펌프 진동, #3·#4 : 펌프 베어링 진동',
         action: '#2, #3, #4 호기 하절기 정비 시 베어링 및 축정렬 보수',
         detailNotes: '#5, #6호기는 대기 상태. #2호기는 커플링 엘레먼트 마모 추정, #3·#4호기는 펌프 베어링 고주파 진동 발생.'
@@ -752,6 +850,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       {
         id: 'hot_water_circ',
         office: '에너지사업소',
+        period: '2026년 상반기',
         name: '중온수 순환펌프',
         power: 350,
         group: 'G1',
@@ -763,6 +862,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '-',
         overallGrade: 'B',
         maxRms: 3.2,
+        history: { '2025년 상반기': 2.8, '2025년 하반기': 3.0, '2026년 상반기': 3.2, '2026년 하반기': null },
         summary: '#3 : 액츄에이터 제작 중, #4 : 전동기 진동 및 이음',
         action: '#3호기 밸브 제작 완료 후 교체, #4호기 향후 보수',
         detailNotes: '지역난방 열공급 주설비(350kW). #4호기는 전동기 구동측에서 미세 금속 이음 발생하여 정기 추세 관리 중.'
@@ -770,6 +870,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       {
         id: 'incin_pump',
         office: '에너지사업소',
+        period: '2026년 상반기',
         name: '소각장 순환펌프',
         power: 95,
         group: 'G2',
@@ -781,6 +882,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '#7, #8',
         overallGrade: 'D',
         maxRms: 6.2,
+        history: { '2025년 상반기': 3.2, '2025년 하반기': 4.4, '2026년 상반기': 6.2, '2026년 하반기': null },
         summary: '#7, #8 : 전동기/펌프 진동 심각, #9 : M/Seal 미세누수',
         action: '#7, #8호기 즉시 분해 점검, #9호기 씰 교체',
         detailNotes: '#7, #8호기는 ISO Group 2 Rigid 기준 D등급(4.5mm/s 초과)으로 베어링 소착 위험. 예비 펌프 즉시 전환 요망.'
@@ -788,6 +890,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       {
         id: 'cool_1st',
         office: '에너지사업소',
+        period: '2026년 상반기',
         name: '1차 냉각수펌프',
         power: 11,
         group: 'G4',
@@ -799,6 +902,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '#2, #3',
         overallGrade: 'D',
         maxRms: 4.8,
+        history: { '2025년 상반기': 1.9, '2025년 하반기': 3.1, '2026년 상반기': 4.8, '2026년 하반기': null },
         summary: '#2 : 전동기 진동 하자보수 요청, #1·#3 : 베어링 진동',
         action: '#2호기 시공사 하자보수 재확인, #1·#3호기 부품 교체',
         detailNotes: '11kW 소형 설비군. #2호기는 시운전 중 이상진동으로 하자보수 접수 완료. #3호기는 펌프측 베어링 손상 징후.'
@@ -806,6 +910,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       {
         id: 'cool_2nd',
         office: '에너지사업소',
+        period: '2026년 상반기',
         name: '2차 냉각수펌프',
         power: 11,
         group: 'G4',
@@ -817,6 +922,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '-',
         overallGrade: 'B',
         maxRms: 2.4,
+        history: { '2025년 상반기': 2.1, '2025년 하반기': 2.2, '2026년 상반기': 2.4, '2026년 하반기': null },
         summary: '#5 : 펌프측 베어링 진동 미세 증가',
         action: '#5호기 향후 계획정비 시 베어링 교체',
         detailNotes: '#4, #6호기는 1.8mm/s 이하로 안정적. #5호기는 정상 상한선 부근으로 오일 보충 및 감시.'
@@ -824,6 +930,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       {
         id: 'fluid_cool',
         office: '에너지사업소',
+        period: '2026년 상반기',
         name: '유체 냉각수펌프',
         power: 7.5,
         group: 'G4',
@@ -835,6 +942,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '-',
         overallGrade: 'B',
         maxRms: 2.6,
+        history: { '2025년 상반기': 2.0, '2025년 하반기': 2.3, '2026년 상반기': 2.6, '2026년 하반기': null },
         summary: '#7 : 펌프측 진동으로 향후 보수 요망',
         action: '현재 운전 이상 없음, 분기별 정기점검 유지',
         detailNotes: '전반적인 상태 양호. #7호기는 베어링 하우징 수평방향 2.6mm/s로 기준치 이내.'
@@ -842,6 +950,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       {
         id: 'water_treat',
         office: '에너지사업소',
+        period: '2026년 상반기',
         name: '수처리펌프',
         power: 18.5,
         group: 'G2',
@@ -853,6 +962,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '-',
         overallGrade: 'A',
         maxRms: 1.3,
+        history: { '2025년 상반기': 1.1, '2025년 하반기': 1.2, '2026년 상반기': 1.3, '2026년 하반기': null },
         summary: '#1, #2 전 설비 이상 없음 (최상)',
         action: '현 상태 유지 및 반기별 점검',
         detailNotes: '전동기 및 펌프 진동 속도 1.3mm/s 이하로 최상의 A등급 유지.'
@@ -860,6 +970,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       {
         id: 'heat_pump',
         office: '에너지사업소',
+        period: '2026년 상반기',
         name: '히트펌프 1·2호기 (저온/고온열)',
         power: 55,
         group: 'G2',
@@ -871,15 +982,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '저온(#1,#2) / 고온(#1~#3)',
         overallGrade: 'D',
         maxRms: 7.4,
+        history: { '2025년 상반기': 3.5, '2025년 하반기': 5.2, '2026년 상반기': 7.4, '2026년 하반기': null },
         summary: '저온열 : 메카니칼 씰 누수, 고온열 : 베어링 진동 과다',
         action: '저온열 즉시보수 실시, 고온열 베어링 순차적 분해정비',
         detailNotes: '총 10대. 저온열은 온수 누출 수반되어 부식 위험 존재, 고온열은 축방향 진동치가 7.4mm/s로 D등급 임계치 초과.'
       },
 
-      // 2. 명지사업소 (장비 공유 및 협조 사업소 샘플)
+      // 2. 명지사업소
       {
         id: 'mj_pump_1',
         office: '명지사업소',
+        period: '2026년 상반기',
         name: '하수유입 1차 펌프 #1',
         power: 220,
         group: 'G2',
@@ -891,6 +1004,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '-',
         overallGrade: 'B',
         maxRms: 2.1,
+        history: { '2025년 상반기': 1.8, '2025년 하반기': 2.0, '2026년 상반기': 2.1, '2026년 하반기': null },
         summary: '전반적인 진동 상태 양호 및 발열 없음',
         action: '분기별 윤활유 보충 및 추세 관리',
         detailNotes: '명지사업소 유입동 메인 펌프. 진동 2.1mm/s로 양호(B등급) 범위 내 안정 운전 중.'
@@ -898,6 +1012,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       {
         id: 'mj_blower_2',
         office: '명지사업소',
+        period: '2026년 상반기',
         name: '생물반응조 송풍기 #2',
         power: 400,
         group: 'G1',
@@ -909,15 +1024,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '-',
         overallGrade: 'C',
         maxRms: 8.2,
+        history: { '2025년 상반기': 4.5, '2025년 하반기': 6.8, '2026년 상반기': 8.2, '2026년 하반기': null },
         summary: '토출측 커플링 진동 및 미세 불평형 확인',
         action: '차기 가동 중지 시 축정렬 레이저 재조정',
         detailNotes: '400kW 고압 터보 송풍기(탄성 기초). 기준치 7.1mm/s를 상회(8.2mm/s)하여 C등급(보수필요) 판정.'
       },
 
-      // 3. 해운대사업소 샘플
+      // 3. 해운대사업소
       {
         id: 'hud_sludge_pump',
         office: '해운대사업소',
+        period: '2026년 상반기',
         name: '소화슬러지 이송펌프 #1',
         power: 37,
         group: 'G2',
@@ -929,6 +1046,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: '-',
         overallGrade: 'A',
         maxRms: 1.1,
+        history: { '2025년 상반기': 2.5, '2025년 하반기': 2.9, '2026년 상반기': 1.1, '2026년 하반기': null },
         summary: '오버홀 정비 완료 후 신품 상태 유지',
         action: '정상 운전 유지',
         detailNotes: '최근 베어링 및 씰 전체 교체 완료로 진동치 1.1mm/s 최상 상태.'
@@ -942,9 +1060,76 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       { name: '해운대사업소', icon: 'fa-water', color: 'text-blue-400' }
     ];
 
-    // Current Active Office Filter
     let currentOffice = 'ALL';
     let vibrationChart = null;
+    let detailChart = null;
+
+    // Render Period Dropdowns
+    function renderPeriodSelectors() {
+      const topDropdown = document.getElementById('periodFilterDropdown');
+      const modalSelect = document.getElementById('inpPeriod');
+      const uploadSelect = document.getElementById('uploadPeriodSelect');
+
+      let options = periodList.map(p => `<option value="${p}" ${p === currentPeriod ? 'selected' : ''}>${p}</option>`).join('');
+
+      if (topDropdown) topDropdown.innerHTML = options;
+      if (modalSelect) modalSelect.innerHTML = options;
+      if (uploadSelect) uploadSelect.innerHTML = options;
+    }
+
+    function switchPeriod(p) {
+      currentPeriod = p;
+      updateDashboard();
+    }
+
+    function openAddPeriodModal() {
+      document.getElementById('addPeriodModal').classList.remove('hidden');
+      document.getElementById('inpPeriodName').focus();
+    }
+    function closeAddPeriodModal() {
+      document.getElementById('addPeriodModal').classList.add('hidden');
+    }
+
+    function handlePeriodSubmit(e) {
+      e.preventDefault();
+      const pName = document.getElementById('inpPeriodName').value.trim();
+      if (!pName) return;
+
+      if (!periodList.includes(pName)) {
+        periodList.push(pName);
+        currentPeriod = pName;
+        renderPeriodSelectors();
+        updateDashboard();
+      }
+
+      document.getElementById('addPeriodForm').reset();
+      closeAddPeriodModal();
+    }
+
+    // Toggle Chart View (Trend vs Bar)
+    function setChartViewMode(mode) {
+      chartViewMode = mode;
+      const btnTrend = document.getElementById('btnViewTrend');
+      const btnBar = document.getElementById('btnViewBar');
+      const trendFilter = document.getElementById('trendFilterBar');
+      const mainTitle = document.getElementById('chartMainTitle');
+      const subTitle = document.getElementById('chartSubTitle');
+
+      if (mode === 'trend') {
+        btnTrend.className = 'px-2.5 py-1 rounded-md font-bold bg-cyan-600 text-white transition flex items-center gap-1.5 shadow';
+        btnBar.className = 'px-2.5 py-1 rounded-md text-slate-400 hover:text-white transition flex items-center gap-1.5';
+        trendFilter.classList.remove('hidden');
+        mainTitle.innerHTML = '<i class="fa-solid fa-chart-line text-cyan-400"></i> 설비 진동치 상태 및 반기별 추이선 (Trend)';
+        subTitle.innerText = '반기별 시계열 데이터 누적 분석을 통한 이상 징후 조기 포착';
+      } else {
+        btnBar.className = 'px-2.5 py-1 rounded-md font-bold bg-cyan-600 text-white transition flex items-center gap-1.5 shadow';
+        btnTrend.className = 'px-2.5 py-1 rounded-md text-slate-400 hover:text-white transition flex items-center gap-1.5';
+        trendFilter.classList.add('hidden');
+        mainTitle.innerHTML = '<i class="fa-solid fa-chart-simple text-cyan-400"></i> 현재 주기 설비별 RMS 및 ISO 경보 기준 비교';
+        subTitle.innerText = `${currentPeriod} 기준 실측치와 경보(C), 위험(D) 임계선`;
+      }
+      renderChart();
+    }
 
     // Render Office Tabs Dynamically
     function renderOfficeTabs() {
@@ -952,7 +1137,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const dropdown = document.getElementById('officeFilterDropdown');
       const selectModal = document.getElementById('inpOffice');
 
-      // 1. Render Upper Bar Tabs
       let tabsHtml = `
         <button onclick="switchOffice('ALL')" class="office-tab px-3 py-1.5 rounded-lg text-xs font-bold transition ${currentOffice === 'ALL' ? 'bg-cyan-600 text-white shadow' : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'}" data-office="ALL">
           전체 사업소
@@ -970,7 +1154,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       });
       container.innerHTML = tabsHtml;
 
-      // 2. Sync Filter Dropdown
       let dropdownHtml = `<option value="ALL">전체 사업소</option>`;
       officeList.forEach(off => {
         dropdownHtml += `<option value="${off.name}">${off.name}</option>`;
@@ -978,7 +1161,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       dropdown.innerHTML = dropdownHtml;
       dropdown.value = currentOffice;
 
-      // 3. Sync Modal Select
       if (selectModal) {
         let selectHtml = '';
         officeList.forEach(off => {
@@ -988,7 +1170,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       }
     }
 
-    // Open/Close Office Add Modal
     function openAddOfficeModal() {
       document.getElementById('addOfficeModal').classList.remove('hidden');
       document.getElementById('inpOfficeName').focus();
@@ -997,20 +1178,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       document.getElementById('addOfficeModal').classList.add('hidden');
     }
 
-    // Handle Office Form Submit
     function handleOfficeSubmit(e) {
       e.preventDefault();
       const name = document.getElementById('inpOfficeName').value.trim();
       const icon = document.querySelector('input[name="officeIcon"]:checked').value;
 
       if (!name) return;
-
-      // Check duplicate
-      if (officeList.some(o => o.name === name)) {
-        document.getElementById('inpOfficeName').classList.add('ring-2', 'ring-rose-500');
-        setTimeout(() => document.getElementById('inpOfficeName').classList.remove('ring-2', 'ring-rose-500'), 1500);
-        return;
-      }
+      if (officeList.some(o => o.name === name)) return;
 
       let color = 'text-cyan-400';
       if (icon === 'fa-fire-flame-curved') color = 'text-amber-400';
@@ -1021,12 +1195,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       document.getElementById('addOfficeForm').reset();
       closeAddOfficeModal();
 
-      // Render Tabs and switch to the newly created office
       renderOfficeTabs();
       switchOffice(name);
     }
 
-    // Auto-register office if missing (used in Excel / Add Equipment)
     function ensureOfficeRegistered(officeName) {
       if (!officeName || officeName === 'ALL') return;
       if (!officeList.some(o => o.name === officeName)) {
@@ -1048,25 +1220,25 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       let grade = 'A';
       const rms = parseFloat(rmsValue);
 
-      if (group === 'G1') { // > 300 kW
+      if (group === 'G1') {
         if (foundation === 'rigid') {
           if (rms <= 2.3) grade = 'A';
           else if (rms <= 4.5) grade = 'B';
           else if (rms <= 7.1) grade = 'C';
           else grade = 'D';
-        } else { // flexible
+        } else {
           if (rms <= 3.5) grade = 'A';
           else if (rms <= 7.1) grade = 'B';
           else if (rms <= 11.0) grade = 'C';
           else grade = 'D';
         }
-      } else { // G2 (15~300kW) & G4 (<15kW)
+      } else {
         if (foundation === 'rigid') {
           if (rms <= 1.4) grade = 'A';
           else if (rms <= 2.8) grade = 'B';
           else if (rms <= 4.5) grade = 'C';
           else grade = 'D';
-        } else { // flexible
+        } else {
           if (rms <= 2.3) grade = 'A';
           else if (rms <= 4.5) grade = 'B';
           else if (rms <= 7.1) grade = 'C';
@@ -1077,11 +1249,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       return { group, grade, foundation };
     }
 
-    // Office Switcher
     function switchOffice(officeName) {
       currentOffice = officeName;
 
-      // Update Tab Styles
       document.querySelectorAll('.office-tab').forEach(tab => {
         if (tab.dataset.office === officeName) {
           tab.className = 'office-tab px-3 py-1.5 rounded-lg text-xs font-bold transition bg-cyan-600 text-white shadow';
@@ -1090,7 +1260,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         }
       });
 
-      // Update Label
       document.getElementById('currentOfficeLabel').innerText = officeName === 'ALL' ? '전체 사업소 현황' : `${officeName} 현황`;
       document.getElementById('officeFilterDropdown').value = officeName;
       document.getElementById('tableSubtitle').innerText = officeName === 'ALL' 
@@ -1104,11 +1273,30 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       switchOffice(val);
     }
 
+    // Update Trend Selector in Chart
+    function updateTrendEquipDropdown(activeData) {
+      const select = document.getElementById('trendEquipSelect');
+      const curVal = select.value;
+
+      let html = `<option value="ALL">상위 주요 위험/주의 설비 전체 비교 (Top 5)</option>`;
+      activeData.forEach(item => {
+        html += `<option value="${item.id}">${item.name} (${item.office})</option>`;
+      });
+      select.innerHTML = html;
+      if (activeData.some(e => e.id === curVal)) {
+        select.value = curVal;
+      }
+    }
+
     // Recalculate Metrics and Charts
     function updateDashboard() {
-      const activeData = currentOffice === 'ALL' 
+      // Filter by Office
+      const officeFiltered = currentOffice === 'ALL' 
         ? equipmentData 
         : equipmentData.filter(e => e.office === currentOffice);
+
+      // Filter by Period for Current Snapshot
+      const activeData = officeFiltered.filter(e => (!e.period || e.period === currentPeriod));
 
       // Total count calculation
       const totalUnits = activeData.reduce((acc, cur) => acc + (cur.totalQty || 1), 0);
@@ -1125,86 +1313,205 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const pct = totalUnits > 0 ? Math.round(((gradeA + gradeB) / activeData.length) * 100) : 0;
       document.getElementById('metric-ab-pct').innerText = pct + '%';
 
+      updateTrendEquipDropdown(officeFiltered);
       renderTable();
-      renderChart(activeData);
+      renderChart();
     }
 
-    // Chart.js Rendering
-    function renderChart(data) {
+    // Chart.js Rendering (Supports Trend Line & Current Snapshot Bar)
+    function renderChart() {
       const ctx = document.getElementById('vibrationChart').getContext('2d');
-      const labels = data.map(e => `${e.name.split(' ')[0]} (${e.office.replace('사업소','')})`);
-      const dataValues = data.map(e => e.maxRms);
-
-      const backgroundColors = data.map(e => {
-        if (e.overallGrade === 'D') return 'rgba(239, 68, 68, 0.85)';
-        if (e.overallGrade === 'C') return 'rgba(245, 158, 11, 0.85)';
-        if (e.overallGrade === 'A') return 'rgba(16, 185, 129, 0.85)';
-        return 'rgba(6, 182, 212, 0.85)';
-      });
+      const officeFiltered = currentOffice === 'ALL' 
+        ? equipmentData 
+        : equipmentData.filter(e => e.office === currentOffice);
 
       if (vibrationChart) {
         vibrationChart.destroy();
       }
 
-      vibrationChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: labels,
-          datasets: [{
-            label: '최대 실측 RMS (mm/s)',
-            data: dataValues,
-            backgroundColor: backgroundColors,
-            borderRadius: 6,
-            borderWidth: 0,
-            barThickness: 22,
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              backgroundColor: '#0f172a',
-              titleColor: '#38bdf8',
-              bodyColor: '#f1f5f9',
-              borderColor: '#334155',
-              borderWidth: 1,
-              padding: 10,
-              callbacks: {
-                label: function(context) {
-                  const item = data[context.dataIndex];
-                  return [
-                    `사업소: ${item.office}`,
-                    `실측 RMS: ${context.parsed.y} mm/s`,
-                    `평가 등급: ${item.overallGrade}등급`,
-                    `정격 용량: ${item.power} kW (${item.group})`
-                  ];
+      if (chartViewMode === 'trend') {
+        // LINE CHART: Historical Trend across Periods
+        const selectedId = document.getElementById('trendEquipSelect') ? document.getElementById('trendEquipSelect').value : 'ALL';
+        
+        let targetItems = [];
+        if (selectedId === 'ALL') {
+          // Sort by maxRms descending, pick top 5
+          targetItems = [...officeFiltered].sort((a, b) => b.maxRms - a.maxRms).slice(0, 5);
+        } else {
+          const found = officeFiltered.find(e => e.id === selectedId);
+          if (found) targetItems = [found];
+        }
+
+        const colors = [
+          '#ef4444', '#f59e0b', '#06b6d4', '#10b981', '#8b5cf6', '#ec4899'
+        ];
+
+        const datasets = targetItems.map((item, idx) => {
+          const color = colors[idx % colors.length];
+          const dataPoints = periodList.map(p => {
+            if (item.history && item.history[p] !== undefined) {
+              return item.history[p];
+            }
+            // Fallback: If matching period, return maxRms
+            return item.period === p ? item.maxRms : null;
+          });
+
+          return {
+            label: `${item.name} (${item.office.replace('사업소','')})`,
+            data: dataPoints,
+            borderColor: color,
+            backgroundColor: color,
+            tension: 0.35,
+            borderWidth: 2.5,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            spanGaps: true
+          };
+        });
+
+        // Add ISO Warning Baseline (2.8 mm/s) & Danger Baseline (4.5 mm/s)
+        datasets.push({
+          label: 'ISO 주의 기준선 (Group2: 2.8)',
+          data: periodList.map(() => 2.8),
+          borderColor: 'rgba(245, 158, 11, 0.6)',
+          borderDash: [5, 5],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false
+        });
+
+        datasets.push({
+          label: 'ISO 정비 기준선 (Group2: 4.5)',
+          data: periodList.map(() => 4.5),
+          borderColor: 'rgba(239, 68, 68, 0.6)',
+          borderDash: [4, 4],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false
+        });
+
+        vibrationChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: periodList,
+            datasets: datasets
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+              legend: {
+                position: 'top',
+                labels: { color: '#94a3b8', font: { size: 10 }, boxWidth: 12, padding: 8 }
+              },
+              tooltip: {
+                backgroundColor: '#0f172a',
+                titleColor: '#38bdf8',
+                bodyColor: '#f1f5f9',
+                borderColor: '#334155',
+                borderWidth: 1,
+                padding: 10,
+                callbacks: {
+                  label: function(ctx) {
+                    if (ctx.parsed.y === null) return null;
+                    return ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} mm/s`;
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                ticks: { color: '#94a3b8', font: { size: 11 } }
+              },
+              y: {
+                min: 0,
+                max: 9,
+                grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                ticks: {
+                  color: '#94a3b8',
+                  font: { size: 11 },
+                  callback: function(v) { return v + ' mm/s'; }
                 }
               }
             }
+          }
+        });
+
+      } else {
+        // BAR CHART: Snapshot of the selected period
+        const activeData = officeFiltered.filter(e => (!e.period || e.period === currentPeriod));
+        const labels = activeData.map(e => `${e.name.split(' ')[0]} (${e.office.replace('사업소','')})`);
+        const dataValues = activeData.map(e => e.maxRms);
+
+        const backgroundColors = activeData.map(e => {
+          if (e.overallGrade === 'D') return 'rgba(239, 68, 68, 0.85)';
+          if (e.overallGrade === 'C') return 'rgba(245, 158, 11, 0.85)';
+          if (e.overallGrade === 'A') return 'rgba(16, 185, 129, 0.85)';
+          return 'rgba(6, 182, 212, 0.85)';
+        });
+
+        vibrationChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: '실측 RMS (mm/s)',
+              data: dataValues,
+              backgroundColor: backgroundColors,
+              borderRadius: 6,
+              borderWidth: 0,
+              barThickness: 22,
+            }]
           },
-          scales: {
-            x: {
-              grid: { color: 'rgba(51, 65, 85, 0.3)' },
-              ticks: { color: '#94a3b8', font: { size: 10 } }
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                backgroundColor: '#0f172a',
+                titleColor: '#38bdf8',
+                bodyColor: '#f1f5f9',
+                borderColor: '#334155',
+                borderWidth: 1,
+                padding: 10,
+                callbacks: {
+                  label: function(context) {
+                    const item = activeData[context.dataIndex];
+                    return [
+                      `측정 시기: ${item.period || currentPeriod}`,
+                      `사업소: ${item.office}`,
+                      `실측 RMS: ${context.parsed.y} mm/s`,
+                      `평가 등급: ${item.overallGrade}등급`
+                    ];
+                  }
+                }
+              }
             },
-            y: {
-              min: 0,
-              max: 9,
-              grid: { color: 'rgba(51, 65, 85, 0.3)' },
-              ticks: {
-                color: '#94a3b8',
-                font: { size: 11 },
-                callback: function(value) { return value + ' mm/s'; }
+            scales: {
+              x: {
+                grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                ticks: { color: '#94a3b8', font: { size: 10 } }
+              },
+              y: {
+                min: 0,
+                max: 9,
+                grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                ticks: {
+                  color: '#94a3b8',
+                  font: { size: 11 },
+                  callback: function(v) { return v + ' mm/s'; }
+                }
               }
             }
           }
-        }
-      });
+        });
+      }
     }
 
-    // Render Table based on active filters
+    // Render Table based on active filters & Period
     function renderTable() {
       const gFilter = document.getElementById('groupFilter').value;
       const sFilter = document.getElementById('statusFilter').value;
@@ -1212,6 +1519,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const tbody = document.getElementById('tableBody');
 
       let filtered = equipmentData.filter(item => {
+        // Period Match
+        if (item.period && item.period !== currentPeriod) return false;
         // Office Match
         if (currentOffice !== 'ALL' && item.office !== currentOffice) return false;
         // Group Match
@@ -1228,14 +1537,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         return true;
       });
 
-      document.getElementById('filteredCount').innerText = `총 ${filtered.length}개 설비 목록 표시 중`;
+      document.getElementById('filteredCount').innerText = `총 ${filtered.length}개 설비 목록 표시 중 (${currentPeriod})`;
 
       if (filtered.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="9" class="text-center py-8 text-slate-500">
+            <td colspan="10" class="text-center py-8 text-slate-500">
               <i class="fa-solid fa-filter-circle-xmark text-2xl mb-2 block"></i>
-              <span>조건에 부합하는 설비 데이터가 없습니다.</span>
+              <span>선택된 시기(${currentPeriod}) 및 검색 조건에 부합하는 설비 데이터가 없습니다.</span>
             </td>
           </tr>
         `;
@@ -1254,6 +1563,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         return `
           <tr class="hover:bg-slate-800/50 transition">
+            <td class="py-3 px-3">
+              <span class="inline-block px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-800 text-slate-300 border border-slate-700">
+                ${item.period || currentPeriod}
+              </span>
+            </td>
             <td class="py-3 px-3">
               <span class="inline-block px-2 py-0.5 rounded text-[10px] font-semibold border ${officeColor}">
                 ${item.office}
@@ -1283,7 +1597,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             </td>
             <td class="py-3 px-3 text-center">
               <div class="flex items-center justify-center gap-1.5">
-                <button onclick="viewEquipmentDetail('${item.id}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-400 text-[11px] font-medium border border-slate-700 transition" title="상세보기">
+                <button onclick="viewEquipmentDetail('${item.id}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-400 text-[11px] font-medium border border-slate-700 transition" title="상세 및 추이선">
                   상세
                 </button>
                 <button onclick="deleteEquipment('${item.id}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 text-[11px] border border-slate-700 transition" title="삭제">
@@ -1335,6 +1649,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     // Add Equipment Form Submit
     function handleEquipmentSubmit(e) {
       e.preventDefault();
+      const period = document.getElementById('inpPeriod').value;
       const office = document.getElementById('inpOffice').value;
       const name = document.getElementById('inpName').value.trim();
       const power = parseFloat(document.getElementById('inpPower').value);
@@ -1345,13 +1660,20 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const notes = document.getElementById('inpNotes').value.trim() || '신규 현장 계측 등록 건.';
 
       const evalRes = calculateIsoGrade(power, rms, foundation);
-
-      // Ensure office is recognized in tabs
       ensureOfficeRegistered(office);
+
+      // Check if equipment already exists to append history, or create new
+      const existing = equipmentData.find(e => e.name === name && e.office === office);
+      let historyObj = {};
+      if (existing && existing.history) {
+        historyObj = { ...existing.history };
+      }
+      historyObj[period] = rms;
 
       const newId = 'custom_' + Date.now();
       const newEntry = {
         id: newId,
+        period: period,
         office: office,
         name: name,
         power: power,
@@ -1364,6 +1686,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         dangerList: evalRes.grade === 'D' ? '#1' : '-',
         overallGrade: evalRes.grade,
         maxRms: rms,
+        history: historyObj,
         summary: summary,
         action: action,
         detailNotes: notes
@@ -1373,7 +1696,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       closeAddModal();
       document.getElementById('addEquipForm').reset();
 
-      // If viewing another office, switch to the new equipment's office
+      currentPeriod = period;
+      renderPeriodSelectors();
       if (currentOffice !== 'ALL' && currentOffice !== office) {
         switchOffice(office);
       } else {
@@ -1383,9 +1707,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
     // Delete Equipment
     function deleteEquipment(id) {
-      const item = equipmentData.find(e => e.id === id);
-      if (!item) return;
-
       equipmentData = equipmentData.filter(e => e.id !== id);
       updateDashboard();
     }
@@ -1393,6 +1714,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     // Modal Control Functions
     function openAddModal() {
       document.getElementById('addModal').classList.remove('hidden');
+      renderPeriodSelectors();
       autoCalcGrade();
     }
     function closeAddModal() {
@@ -1410,6 +1732,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     function openUploadModal() {
       document.getElementById('uploadModal').classList.remove('hidden');
       document.getElementById('uploadStatusBox').classList.add('hidden');
+      renderPeriodSelectors();
     }
     function closeUploadModal() {
       document.getElementById('uploadModal').classList.add('hidden');
@@ -1420,9 +1743,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     }
     function closeDetailModal() {
       document.getElementById('detailModal').classList.add('hidden');
+      if (detailChart) {
+        detailChart.destroy();
+        detailChart = null;
+      }
     }
 
-    // View Equipment Detail Modal
+    // View Equipment Detail Modal with Dedicated Line Trend Chart
     function viewEquipmentDetail(id) {
       const item = equipmentData.find(e => e.id === id);
       if (!item) return;
@@ -1437,7 +1764,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       detailContainer.innerHTML = `
         <div class="flex items-center justify-between pb-3 border-b border-slate-700">
           <div>
-            <span class="text-xs font-semibold px-2 py-0.5 rounded bg-slate-800 text-cyan-400 border border-slate-700">${item.office}</span>
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-semibold px-2 py-0.5 rounded bg-slate-800 text-cyan-400 border border-slate-700">${item.office}</span>
+              <span class="text-xs font-semibold px-2 py-0.5 rounded bg-slate-800 text-purple-300 border border-slate-700">${item.period || currentPeriod}</span>
+            </div>
             <h3 class="text-lg font-bold text-white mt-1">${item.name}</h3>
           </div>
           <span class="px-3 py-1 rounded text-xs font-black ${badgeClass}">${badgeLabel}</span>
@@ -1462,6 +1792,20 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Historical Trend Chart inside Modal -->
+        <div class="p-3 bg-slate-800/60 rounded-xl border border-slate-700 my-4">
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+              <i class="fa-solid fa-chart-line text-cyan-400"></i>
+              반기별 진동 추세 추이선 (Trend Line)
+            </span>
+            <span class="text-[11px] text-slate-400">기준: RMS mm/s</span>
+          </div>
+          <div class="h-44 w-full">
+            <canvas id="detailTrendChart"></canvas>
+          </div>
+        </div>
+
         <div class="space-y-3 text-xs">
           <div>
             <h4 class="font-semibold text-slate-300 mb-1"><i class="fa-solid fa-stethoscope text-cyan-400 mr-1.5"></i>현장 진단 요약</h4>
@@ -1481,7 +1825,61 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <button onclick="closeDetailModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-medium transition text-xs">닫기</button>
         </div>
       `;
+
       openDetailModal();
+
+      // Render Individual Trend Line
+      setTimeout(() => {
+        const dCtx = document.getElementById('detailTrendChart').getContext('2d');
+        const dData = periodList.map(p => {
+          if (item.history && item.history[p] !== undefined) return item.history[p];
+          return item.period === p ? item.maxRms : null;
+        });
+
+        if (detailChart) detailChart.destroy();
+        detailChart = new Chart(dCtx, {
+          type: 'line',
+          data: {
+            labels: periodList,
+            datasets: [
+              {
+                label: item.name,
+                data: dData,
+                borderColor: '#06b6d4',
+                backgroundColor: 'rgba(6, 182, 212, 0.15)',
+                borderWidth: 3,
+                pointRadius: 6,
+                fill: true,
+                tension: 0.3
+              },
+              {
+                label: 'C등급 경보(2.8)',
+                data: periodList.map(() => 2.8),
+                borderColor: 'rgba(245, 158, 11, 0.7)',
+                borderDash: [4, 4],
+                borderWidth: 1.5,
+                pointRadius: 0
+              },
+              {
+                label: 'D등급 위험(4.5)',
+                data: periodList.map(() => 4.5),
+                borderColor: 'rgba(239, 68, 68, 0.7)',
+                borderDash: [4, 4],
+                borderWidth: 1.5,
+                pointRadius: 0
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { grid: { color: 'rgba(51, 65, 85, 0.3)' }, ticks: { color: '#94a3b8' } },
+              y: { min: 0, max: 9, grid: { color: 'rgba(51, 65, 85, 0.3)' }, ticks: { color: '#94a3b8' } }
+            }
+          }
+        });
+      }, 50);
     }
 
     // Interactive Calculator Logic
@@ -1552,6 +1950,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
     function processDataFile(file) {
       const statusBox = document.getElementById('uploadStatusBox');
+      const targetPeriod = document.getElementById('uploadPeriodSelect').value;
       statusBox.classList.remove('hidden');
       statusBox.innerHTML = `<span class="text-cyan-400 font-semibold"><i class="fa-solid fa-spinner fa-spin mr-1"></i>파일 파싱 중: ${file.name}</span>`;
 
@@ -1571,7 +1970,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           }
 
           let addedCount = 0;
-          // Expected Header: 사업소, 설비명, 용량kW, 실측RMS, 진단요약, 조치계획
+          // Expected Header: 사업소, 설비명, 용량kW, 실측RMS, 진단요약, 조치계획, 측정시기
           for (let i = 1; i < jsonData.length; i++) {
             const row = jsonData[i];
             if (!row || row.length < 3) continue;
@@ -1582,12 +1981,21 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             const rms = parseFloat(row[3]) || 2.5;
             const summary = (row[4] || '엑셀 일괄 업로드 설비').toString().trim();
             const action = (row[5] || '추세 관리 및 정기점검').toString().trim();
+            const period = (row[6] || targetPeriod).toString().trim();
+
+            if (!periodList.includes(period)) {
+              periodList.push(period);
+            }
 
             ensureOfficeRegistered(office);
             const evalRes = calculateIsoGrade(power, rms, 'rigid');
 
+            let historyObj = {};
+            historyObj[period] = rms;
+
             equipmentData.unshift({
               id: 'imp_' + Date.now() + '_' + i,
+              period: period,
               office: office,
               name: name,
               power: power,
@@ -1600,6 +2008,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
               dangerList: evalRes.grade === 'D' ? '#1' : '-',
               overallGrade: evalRes.grade,
               maxRms: rms,
+              history: historyObj,
               summary: summary,
               action: action,
               detailNotes: `엑셀 파일(${file.name}) 일괄 업로드 등록 건`
@@ -1607,8 +2016,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             addedCount++;
           }
 
+          currentPeriod = targetPeriod;
+          renderPeriodSelectors();
+
           statusBox.className = 'p-3 rounded-lg border text-xs bg-emerald-950/20 border-emerald-500/40 text-emerald-400 font-medium';
-          statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>총 <strong>${addedCount}건</strong>의 설비가 성공적으로 등록 및 ISO 판정되었습니다!`;
+          statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>총 <strong>${addedCount}건</strong>의 설비가 (${targetPeriod}) 주기로 성공적으로 등록되었습니다!`;
 
           updateDashboard();
           setTimeout(() => { closeUploadModal(); }, 1500);
@@ -1623,13 +2035,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       reader.readAsArrayBuffer(file);
     }
 
-    // Download Sample CSV / Excel Template
+    // Download Sample CSV / Excel Template with Period column
     function downloadSampleTemplate() {
       const templateData = [
-        ["사업소", "설비명", "용량kW", "실측RMS", "진단요약", "조치계획"],
-        ["에너지사업소", "#5 응축수펌프", 45, 2.3, "베어링 수평 진동 안정", "정상 운전 유지"],
-        ["명지사업소", "소화가스 압축기 #1", 160, 4.8, "고주파 진동 및 커플링 이음", "커플링 엘레먼트 교체 요망"],
-        ["해운대사업소", "탈수여액 펌프 #2", 15, 5.2, "모터 구동측 과다 진동", "긴급 정밀점검 필요"]
+        ["사업소", "설비명", "용량kW", "실측RMS", "진단요약", "조치계획", "측정시기"],
+        ["에너지사업소", "#5 응축수펌프", 45, 2.3, "베어링 수평 진동 안정", "정상 운전 유지", "2026년 상반기"],
+        ["명지사업소", "소화가스 압축기 #1", 160, 4.8, "고주파 진동 및 커플링 이음", "커플링 엘레먼트 교체 요망", "2026년 상반기"],
+        ["해운대사업소", "탈수여액 펌프 #2", 15, 5.2, "모터 구동측 과다 진동", "긴급 정밀점검 필요", "2026년 상반기"]
       ];
 
       const ws = XLSX.utils.aoa_to_sheet(templateData);
@@ -1642,17 +2054,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     function exportToCSV() {
       const target = currentOffice === 'ALL' ? equipmentData : equipmentData.filter(e => e.office === currentOffice);
       const rows = [
-        ["사업소", "설비명", "용량(kW)", "기계그룹", "실측RMS(mm/s)", "종합등급", "진단요약", "조치대책"]
+        ["측정시기", "사업소", "설비명", "용량(kW)", "기계그룹", "실측RMS(mm/s)", "종합등급", "진단요약", "조치대책"]
       ];
 
       target.forEach(e => {
-        rows.push([e.office, e.name, e.power, e.group, e.maxRms, e.overallGrade, e.summary, e.action]);
+        rows.push([e.period || currentPeriod, e.office, e.name, e.power, e.group, e.maxRms, e.overallGrade, e.summary, e.action]);
       });
 
       const ws = XLSX.utils.aoa_to_sheet(rows);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "진단결과");
-      XLSX.writeFile(wb, `회전설비_진동진단결과_${currentOffice}.xlsx`);
+      XLSX.writeFile(wb, `회전설비_진동진단결과_${currentOffice}_${currentPeriod}.xlsx`);
     }
 
     // Drag and Drop Event Handlers
@@ -1677,8 +2089,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
     // Window Init
     window.onload = function() {
+      renderPeriodSelectors();
       renderOfficeTabs();
       updateDashboard();
+      setChartViewMode('trend');
     };
   </script>
 </body>
