@@ -1,4 +1,29 @@
-<!DOCTYPE html>
+import streamlit as st
+import streamlit.components.v1 as components
+
+# Streamlit 기본 레이아웃을 전체 너비(wide)로 설정
+st.set_page_config(
+    page_title="부산환경공단 회전설비 진동진단 통합관리 시스템 (BECO-VIB)",
+    page_icon="⚙️",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Streamlit 기본 여백 제거
+st.markdown("""
+<style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .block-container {
+        padding: 0rem !important;
+        max-width: 100% !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# BECO-VIB 시스템 전체 HTML/CSS/JS 코드
+DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
@@ -1657,4 +1682,7 @@
     };
   </script>
 </body>
-</html>
+</html>"""
+
+# Streamlit 환경 안에서 HTML 대시보드를 iframe 형태로 온전히 구동
+components.html(DASHBOARD_HTML, height=1400, scrolling=True)
