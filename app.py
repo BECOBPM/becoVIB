@@ -2664,35 +2664,50 @@ dashboard_html = r"""<!DOCTYPE html>
             const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
             
             let currentEquip = null;
+            let isHeaderFound = false;
 
             // 2. 세로형 다중 행 데이터 추적 및 병합
             for (let i = 0; i < jsonData.length; i++) {
               const row = jsonData[i];
               if (!row || row.length < 5) continue; 
+              
+              const rowStr = row.join('').replace(/\s/g, '');
+              // 엑셀 표의 실제 시작점(헤더)을 찾아 그 위쪽의 쓰레기 텍스트 무시
+              if (rowStr.includes('설비명') && rowStr.includes('측정위치')) {
+                isHeaderFound = true;
+                continue;
+              }
 
-              let equipName = String(row[1]).trim();
-              if (equipName === '설비명' || String(row[3]).includes('측정위치')) continue;
+              if (!isHeaderFound) continue;
+
+              let equipName = String(row[1] || '').trim();
+              
+              // 엑셀 하단의 비고란, 안내문구 등 가짜 데이터 스킵 (너무 길거나 특정 키워드 포함 시)
+              if (equipName.length > 30 || equipName.includes('점검실시') || equipName.includes('비고') || equipName.includes('반기') || equipName.includes('결재')) {
+                equipName = ''; 
+              }
 
               // 새 설비명 등장 시
-              if (equipName !== '') {
+              if (equipName !== '' && equipName !== '설비명' && !String(row[3]).includes('측정위치')) {
                 if (currentEquip) parsedList.push(currentEquip);
                 currentEquip = {
                   name: equipName,
-                  period: sheetPeriod, // 시트에서 찾은 시기 적용
+                  period: sheetPeriod,
                   power: parseFloat(row[2]) || 55,
                   points: {
                     m_de: { h: 0, v: 0, a: 0 }, m_nde: { h: 0, v: 0, a: 0 },
                     p_de: { h: 0, v: 0, a: 0 }, p_nde: { h: 0, v: 0, a: 0 }
                   },
                   summary: '',
-                  action: ''
+                  action: '',
+                  hasValidData: false // 진짜 측정 수치가 들어왔는지 판별하는 깐깐한 플래그
                 };
               }
 
               if (!currentEquip) continue;
 
-              let pointStr = String(row[3]).trim().replace(/\s/g, ''); 
-              let axisStr = String(row[4]).toLowerCase().trim();
+              let pointStr = String(row[3] || '').trim().replace(/\s/g, ''); 
+              let axisStr = String(row[4] || '').toLowerCase().trim();
               let rmsVal = parseFloat(row[5]);
               let causeStr = String(row[8] || '').trim();
               let actionStr = String(row[9] || '').trim();
@@ -2708,6 +2723,9 @@ dashboard_html = r"""<!DOCTYPE html>
                   if (axisStr === 'x' || axisStr === 'h') targetPoint.h = Math.max(targetPoint.h, rmsVal);
                   if (axisStr === 'y' || axisStr === 'v') targetPoint.v = Math.max(targetPoint.v, rmsVal);
                   if (axisStr === 'z' || axisStr === 'a') targetPoint.a = Math.max(targetPoint.a, rmsVal);
+                  
+                  // 진동 수치가 정상적으로 하나라도 입력되었으므로 진짜 설비로 인정!
+                  currentEquip.hasValidData = true; 
                 }
               }
 
@@ -2721,9 +2739,12 @@ dashboard_html = r"""<!DOCTYPE html>
             if (currentEquip) parsedList.push(currentEquip);
           }
 
+          // [핵심 필터] 유효한 진동 측정값이 전혀 없는 껍데기(안내문구 등) 데이터는 리스트에서 완전 삭제
+          parsedList = parsedList.filter(eq => eq.hasValidData);
+
           if (parsedList.length === 0) {
             statusBox.className = 'p-3 rounded-lg border text-xs bg-amber-950/20 border-amber-500/40 text-amber-400';
-            statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>인식 가능한 데이터가 없습니다.`;
+            statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>인식 가능한 진동 데이터가 없습니다. 양식을 확인해 주세요.`;
             return;
           }
 
@@ -2731,7 +2752,6 @@ dashboard_html = r"""<!DOCTYPE html>
           parsedList.forEach((eq, idx) => {
             let p = eq.points;
             let maxRms = Math.max(p.m_de.h, p.m_de.v, p.m_de.a, p.m_nde.h, p.m_nde.v, p.m_nde.a, p.p_de.h, p.p_de.v, p.p_de.a, p.p_nde.h, p.p_nde.v, p.p_nde.a);
-            if (maxRms === 0) maxRms = 1.0; 
 
             const evalRes = calculateIsoGrade(eq.power, maxRms, 'rigid');
             let historyObj = {};
