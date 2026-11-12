@@ -3,7 +3,15 @@ import streamlit.components.v1 as components
 import sqlite3
 import json
 import os
+import re
 from datetime import datetime
+
+# 엑셀 서버 직접 파싱을 위한 pandas / openpyxl 활용
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
 
 # ==============================================================================
 # 1. 페이지 기본 설정 및 서버 내부 SQLite DB 초기화
@@ -42,10 +50,200 @@ DEFAULT_OFFICES = [
 DEFAULT_PERIODS = ["2026년 상반기", "2026년 하반기"]
 
 
+def calc_iso_grade_py(power_kw, rms_val, foundation="rigid"):
+    group = "G2"
+    if power_kw > 300:
+        group = "G1"
+    elif power_kw < 15:
+        group = "G4"
+
+    rms = float(rms_val or 0.0)
+    grade = "A"
+    if group == "G1":
+        if foundation == "rigid":
+            if rms <= 2.3: grade = "A"
+            elif rms <= 4.5: grade = "B"
+            elif rms <= 7.1: grade = "C"
+            else: grade = "D"
+        else:
+            if rms <= 3.5: grade = "A"
+            elif rms <= 7.1: grade = "B"
+            elif rms <= 11.0: grade = "C"
+            else: grade = "D"
+    else:
+        if foundation == "rigid":
+            if rms <= 1.4: grade = "A"
+            elif rms <= 2.8: grade = "B"
+            elif rms <= 4.5: grade = "C"
+            else: grade = "D"
+        else:
+            if rms <= 2.3: grade = "A"
+            elif rms <= 4.5: grade = "B"
+            elif rms <= 7.1: grade = "C"
+            else: grade = "D"
+    return group, grade
+
+
+def parse_excel_directly_in_python(uploaded_file, upload_office, default_period, existing_periods):
+    """파이썬 서버에서 직접 엑셀(.xlsx) 다중 시트를 파싱하여 SQLite DB 저장용 리스트 생성"""
+    xl = pd.ExcelFile(uploaded_file)
+    parsed_by_sheet = {}
+    new_periods = list(existing_periods)
+
+    for sheet_name in xl.sheet_names:
+        if any(k in sheet_name for k in ["가이드", "양식", "설명"]):
+            continue
+
+        sheet_period = default_period
+        ym = re.search(r"(\d{2,4})\s*년?", sheet_name)
+        y_str = default_period.split("년")[0] + "년"
+        if ym:
+            y_val = ym.group(1)
+            y_str = ("20" + y_val if len(y_val) == 2 else y_val) + "년"
+
+        if "상반기" in sheet_name:
+            sheet_period = f"{y_str} 상반기"
+        elif "하반기" in sheet_name:
+            sheet_period = f"{y_str} 하반기"
+
+        if sheet_period not in new_periods:
+            new_periods.append(sheet_period)
+        if sheet_period not in parsed_by_sheet:
+            parsed_by_sheet[sheet_period] = {}
+
+        df = xl.parse(sheet_name, header=None).fillna("")
+        rows = df.values.tolist()
+
+        current_equip = None
+        last_power = 55.0
+        is_header_found = False
+
+        for row in rows:
+            if not row or len(row) < 4:
+                continue
+            row_str = "".join(str(c) for c in row).replace(" ", "")
+            if "설비명" in row_str and ("측정위치" in row_str or "전동기" in row_str):
+                is_header_found = True
+                continue
+            if not is_header_found:
+                continue
+
+            equip_name = re.sub(r"\s+", " ", str(row[1] if len(row) > 1 else "").strip())
+            try:
+                p_val = float(row[2]) if len(row) > 2 and str(row[2]).strip() != "" else None
+                if p_val and p_val > 0:
+                    last_power = p_val
+            except Exception:
+                p_val = None
+
+            point_str = str(row[3] if len(row) > 3 else "").strip().replace(" ", "")
+            axis_str = str(row[4] if len(row) > 4 else "").strip().lower()
+            cause_str = str(row[8] if len(row) > 8 else "").strip()
+            action_str = str(row[9] if len(row) > 9 else "").strip()
+
+            if (
+                len(equip_name) > 28
+                or any(g in equip_name for g in ["점검실시", "업데이트", "페이지", "결재", "비고"])
+                or equip_name == "반기"
+            ):
+                current_equip = None
+                continue
+
+            has_point = (
+                any(k in point_str for k in ["전동기", "펌프", "송풍기", "부하", "가동정지", "미가동", "정비", "수리", "고장", "휴지", "대기"])
+                or bool(re.match(r"^[1-4]", point_str))
+            )
+
+            if equip_name and equip_name != "설비명":
+                if equip_name not in parsed_by_sheet[sheet_period]:
+                    parsed_by_sheet[sheet_period][equip_name] = {
+                        "name": equip_name,
+                        "period": sheet_period,
+                        "power": last_power,
+                        "points": {
+                            "m_de": {"h": 0.0, "v": 0.0, "a": 0.0},
+                            "m_nde": {"h": 0.0, "v": 0.0, "a": 0.0},
+                            "p_de": {"h": 0.0, "v": 0.0, "a": 0.0},
+                            "p_nde": {"h": 0.0, "v": 0.0, "a": 0.0},
+                        },
+                        "summary": "",
+                        "action": "",
+                    }
+                current_equip = parsed_by_sheet[sheet_period][equip_name]
+                if p_val and p_val > 0:
+                    current_equip["power"] = p_val
+
+            if not current_equip:
+                continue
+
+            if "가동정지" in point_str or "미가동" in point_str:
+                if "가동정지" not in current_equip["summary"]:
+                    current_equip["summary"] = "가동정지" + (f" ({cause_str})" if cause_str else "")
+
+            try:
+                rms_val = float(row[5]) if len(row) > 5 and str(row[5]).strip() != "" else None
+            except Exception:
+                rms_val = None
+
+            if has_point and rms_val is not None and 0 <= rms_val < 50:
+                pts = current_equip["points"]
+                tp = None
+                if "전동기" in point_str and "반부하" in point_str:
+                    tp = pts["m_nde"]
+                elif "전동기" in point_str or point_str.startswith("1") or point_str.startswith("2"):
+                    tp = pts["m_nde"] if "반부하" in point_str else pts["m_de"]
+                elif any(k in point_str for k in ["펌프", "송풍기"]) or point_str.startswith("3") or point_str.startswith("4"):
+                    tp = pts["p_nde"] if "반부하" in point_str else pts["p_de"]
+
+                if tp is not None:
+                    if axis_str in ("x", "h"):
+                        tp["h"] = max(tp["h"], rms_val)
+                    elif axis_str in ("y", "v"):
+                        tp["v"] = max(tp["v"], rms_val)
+                    elif axis_str in ("z", "a"):
+                        tp["a"] = max(tp["a"], rms_val)
+
+            if cause_str and cause_str != "-" and cause_str not in current_equip["summary"]:
+                current_equip["summary"] += (", " if current_equip["summary"] else "") + cause_str
+            if action_str and action_str not in ("양호", "-") and action_str not in current_equip["action"]:
+                current_equip["action"] += (", " if current_equip["action"] else "") + action_str
+
+    result_items = []
+    sheet_counts = {}
+    for p_key, eq_map in parsed_by_sheet.items():
+        if not eq_map:
+            continue
+        sheet_counts[p_key] = len(eq_map)
+        for eq in eq_map.values():
+            p = eq["points"]
+            max_rms = max(
+                p["m_de"]["h"], p["m_de"]["v"], p["m_de"]["a"],
+                p["m_nde"]["h"], p["m_nde"]["v"], p["m_nde"]["a"],
+                p["p_de"]["h"], p["p_de"]["v"], p["p_de"]["a"],
+                p["p_nde"]["h"], p["p_nde"]["v"], p["p_nde"]["a"],
+            )
+            grp, grd = calc_iso_grade_py(eq["power"], max_rms, "rigid")
+            result_items.append({
+                "id": f"{upload_office}_{p_key}_{eq['name']}",
+                "office": upload_office,
+                "period": p_key,
+                "name": eq["name"],
+                "power": eq["power"],
+                "group": grp,
+                "foundation": "rigid",
+                "overallGrade": "A" if max_rms == 0 else grd,
+                "maxRms": max_rms,
+                "points": p,
+                "summary": (eq["summary"] or "가동정지") if max_rms == 0 else (eq["summary"] or "측정 완료"),
+                "action": (eq["action"] or "정비 대기") if max_rms == 0 else (eq["action"] or "추세 관리"),
+            })
+
+    return result_items, new_periods, sheet_counts
+
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # 설비 데이터 테이블 (사업소 + 측정시기 + 설비명 기준 관리)
     c.execute("""
         CREATE TABLE IF NOT EXISTS equipment_records (
             id TEXT PRIMARY KEY,
@@ -56,14 +254,12 @@ def init_db():
             updated_at TEXT
         )
     """)
-    # 메타 설정 테이블 (사업소 목록, 측정시기 목록)
     c.execute("""
         CREATE TABLE IF NOT EXISTS system_meta (
             meta_key TEXT PRIMARY KEY,
             meta_value TEXT
         )
     """)
-    # 초기 사업소 및 주기 세팅
     c.execute("SELECT meta_value FROM system_meta WHERE meta_key = 'offices'")
     if not c.fetchone():
         c.execute("INSERT INTO system_meta VALUES ('offices', ?)", (json.dumps(DEFAULT_OFFICES, ensure_ascii=False),))
@@ -98,21 +294,19 @@ def load_server_data():
     return equip_list, offices, periods
 
 
-def save_office_data_to_server(target_office, equip_items, periods=None):
-    """특정 사업소(또는 전체) 데이터를 서버 SQLite DB에 병합 저장"""
+def upsert_items_to_server_db(equip_items, periods=None, replace_office_periods=None):
+    """서버 SQLite DB에 직접 저장 (타 컴퓨터 접속 시 즉시 조회됨)"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    if target_office == "ALL":
-        c.execute("DELETE FROM equipment_records")
-    else:
-        c.execute("DELETE FROM equipment_records WHERE office = ?", (target_office,))
+    if replace_office_periods:
+        for off_name, per_name in replace_office_periods:
+            c.execute("DELETE FROM equipment_records WHERE office = ? AND period = ?", (off_name, per_name))
 
     for item in equip_items:
-        if target_office != "ALL" and item.get("office") != target_office:
-            continue
-        rec_id = str(item.get("id") or f"{item.get('office')}_{item.get('period')}_{item.get('name')}")
+        rec_id = f"{item.get('office')}_{item.get('period')}_{item.get('name')}"
+        item["id"] = rec_id
         c.execute(
             "INSERT OR REPLACE INTO equipment_records (id, office, period, name, data_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
             (
@@ -121,8 +315,8 @@ def save_office_data_to_server(target_office, equip_items, periods=None):
                 item.get("period", "2026년 상반기"),
                 item.get("name", "미지정"),
                 json.dumps(item, ensure_ascii=False),
-                now_str
-            )
+                now_str,
+            ),
         )
 
     if periods:
@@ -132,44 +326,94 @@ def save_office_data_to_server(target_office, equip_items, periods=None):
     conn.close()
 
 
+def delete_office_period_from_server(target_office, target_period):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    if target_office == "ALL":
+        c.execute("DELETE FROM equipment_records WHERE period = ?", (target_period,))
+    else:
+        c.execute("DELETE FROM equipment_records WHERE office = ? AND period = ?", (target_office, target_period))
+    conn.commit()
+    conn.close()
+
+
 init_db()
 server_equip_data, server_offices, server_periods = load_server_data()
 
 # ==============================================================================
-# 2. 좌측 사이드바: 다중 사업소 서버 DB 컨트롤 패널 (실시간 공유/백업/반영)
+# 2. 좌측 사이드바: 서버 DB 직결 엑셀 업로드 (타 PC 실시간 공유용)
 # ==============================================================================
 with st.sidebar:
-    st.markdown("### 🏢 다중 사업소 서버 DB 관리")
-    st.caption(f"현재 서버 DB 파일: `{DB_FILE}` (자동 연결됨)")
+    st.markdown("### 🏢 18개 사업소 통합 서버 DB")
+    st.success(f"🟢 서버 DB 정상 가동 중 (총 **{len(server_equip_data)}**건 저장됨)")
+    st.caption("여기에 엑셀을 올리면 **모든 컴퓨터(타 사업소)**에서 즉시 똑같이 조회됩니다!")
 
     office_names = [o["name"] for o in server_offices]
     selected_my_office = st.selectbox(
-        "👤 내 소속 사업소 선택",
-        options=["전체 사업소 (총괄)"] + office_names,
-        index=office_names.index("에너지사업소") + 1 if "에너지사업소" in office_names else 0
+        "👤 1. 업로드/조회할 사업소 선택",
+        options=office_names,
+        index=office_names.index("에너지사업소") if "에너지사업소" in office_names else 0
+    )
+
+    selected_default_period = st.selectbox(
+        "📅 2. 기본 측정시기 선택",
+        options=server_periods,
+        index=0
     )
 
     st.markdown("---")
-    st.markdown("#### ☁️ 서버 DB 동기화 (타 사업소와 공유)")
-    st.info(
-        "우측 대시보드에서 엑셀을 업로드하거나 수정한 뒤, **[내보내기]** 대신 아래에 **서버 반영 JSON**을 붙여넣거나 백업 파일을 올리면 모든 접속자에게 즉시 공유됩니다."
+    st.markdown("#### 📥 서버 DB에 엑셀 직접 업로드 (권장)")
+    direct_excel_file = st.file_uploader(
+        f"[{selected_my_office}] 현장 엑셀(.xlsx) 선택",
+        type=["xlsx", "xls"],
+        key="direct_server_excel"
     )
 
-    uploaded_sync_file = st.file_uploader("📂 백업/공유 파일(.json)로 서버 DB 즉시 업데이트", type=["json"])
-    if uploaded_sync_file is not None:
-        if st.button("🚀 선택한 파일 서버 DB에 반영", use_container_width=True, type="primary"):
+    if direct_excel_file is not None:
+        if st.button("🚀 서버 DB에 즉시 저장 (전 컴퓨터 공유)", use_container_width=True, type="primary"):
+            if not HAS_PANDAS:
+                st.error("서버에 pandas/openpyxl 패키지가 없습니다. 우측 대시보드에서 업로드 후 아래 동기화 박스를 이용해 주세요.")
+            else:
+                try:
+                    items, updated_periods, counts_map = parse_excel_directly_in_python(
+                        direct_excel_file, selected_my_office, selected_default_period, server_periods
+                    )
+                    if not items:
+                        st.warning("엑셀에서 인식된 설비가 없습니다. 파일 형식을 확인해 주세요.")
+                    else:
+                        replace_pairs = [(selected_my_office, p_k) for p_k in counts_map.keys()]
+                        upsert_items_to_server_db(items, updated_periods, replace_office_periods=replace_pairs)
+                        summary_txt = ", ".join([f"{k}: {v}대" for k, v in counts_map.items()])
+                        st.success(f"✅ [{selected_my_office}] 서버 DB 저장 완료! ({summary_txt})")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"엑셀 서버 저장 오류: {e}")
+
+    st.markdown("---")
+    with st.expander("🔄 우측 웹 화면 수정분 서버 DB 반영 / 초기화"):
+        st.caption("우측 대시보드 안에서 직접 등록·수정한 경우, 우측 상단 **[서버반영 코드복사]** 버튼을 누른 뒤 아래 칸에 붙여넣고 저장하세요.")
+        pasted_json = st.text_area("서버 반영 데이터 붙여넣기", height=80, placeholder="여기에 붙여넣기 (Ctrl+V)")
+        if st.button("💾 붙여넣은 데이터 서버 DB 반영", use_container_width=True):
             try:
-                payload = json.loads(uploaded_sync_file.read().decode("utf-8"))
-                target_off = payload.get("targetOffice", "ALL")
+                payload = json.loads(pasted_json)
                 items = payload.get("equipmentData", [])
                 pers = payload.get("periodList", server_periods)
-                save_office_data_to_server(target_off, items, pers)
-                st.success(f"서버 DB에 성공적으로 저장되었습니다! (총 {len(items)}건)")
+                conn = sqlite3.connect(DB_FILE)
+                conn.execute("DELETE FROM equipment_records")
+                conn.commit()
+                conn.close()
+                upsert_items_to_server_db(items, pers)
+                st.success(f"서버 DB 동기화 완료! (총 {len(items)}건)")
                 st.rerun()
             except Exception as e:
-                st.error(f"파일 반영 실패: {e}")
+                st.error(f"데이터 형식 오류: {e}")
 
-    # 현재 서버 전체 데이터 백업 다운로드
+        if st.button(f"🗑️ [{selected_my_office} - {selected_default_period}] 서버 DB 비우기", use_container_width=True):
+            delete_office_period_from_server(selected_my_office, selected_default_period)
+            st.warning("선택한 사업소·시기의 서버 데이터가 삭제되었습니다.")
+            st.rerun()
+
+    # 전체 서버 DB 백업 다운로드
     full_backup_json = json.dumps({
         "targetOffice": "ALL",
         "equipmentData": server_equip_data,
@@ -178,21 +422,17 @@ with st.sidebar:
     }, ensure_ascii=False, indent=2)
 
     st.download_button(
-        label="💾 현재 서버 DB 전체 백업 받기 (.json)",
+        label="💾 서버 DB 전체 백업 파일 받기 (.json)",
         data=full_backup_json,
         file_name=f"BECO_VIB_서버DB백업_{datetime.now().strftime('%Y%m%d')}.json",
         mime="application/json",
         use_container_width=True
     )
 
-    st.markdown("---")
-    st.markdown("#### 📊 서버 DB 저장 현황")
-    st.metric("서버 총 등록 설비 데이터", f"{len(server_equip_data)} 건")
-
 # ==============================================================================
 # 3. 메인 웹 대시보드 (서버 DB 초기 주입 + 18개 사업소 + 전사 비교 + AI 진단)
 # ==============================================================================
-initial_office_val = "ALL" if selected_my_office.startswith("전체") else selected_my_office
+initial_office_val = selected_my_office
 
 dashboard_html = r"""<!DOCTYPE html>
 <html lang="ko">
@@ -219,6 +459,19 @@ dashboard_html = r"""<!DOCTYPE html>
 </head>
 <body class="min-h-screen custom-scrollbar text-slate-200">
 
+  <!-- Top Sync Notice Banner (브라우저에만 있고 서버에 아직 안 올라간 데이터가 있을 때 자동 안내) -->
+  <div id="unsyncedAlertBanner" class="hidden bg-amber-500/20 border-b border-amber-500/50 px-4 py-2 text-xs text-amber-200">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+      <div>
+        <i class="fa-solid fa-triangle-exclamation text-amber-400 mr-1.5"></i>
+        <strong>알림:</strong> 현재 내 브라우저에만 임시 저장된 변경사항이 있습니다. <strong>다른 컴퓨터에서도 보이게 하려면</strong> 좌측 사이드바에서 엑셀을 직접 업로드하거나 우측 버튼을 눌러 서버 DB에 반영하세요!
+      </div>
+      <button onclick="copyServerSyncCode()" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold px-3 py-1 rounded transition shrink-0">
+        <i class="fa-solid fa-copy mr-1"></i>서버반영 코드 복사하기
+      </button>
+    </div>
+  </div>
+
   <!-- Top Header -->
   <header class="glass-card sticky top-0 z-40 border-b border-slate-700/60 bg-slate-900/95 px-4 py-3 sm:px-6">
     <div class="max-w-7xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-3">
@@ -230,8 +483,8 @@ dashboard_html = r"""<!DOCTYPE html>
           <div class="flex items-center gap-2 flex-wrap">
             <h1 class="text-lg sm:text-xl font-bold tracking-tight text-white">BECO-VIB Enterprise Server</h1>
             <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800">18개 사업소 통합</span>
-            <span id="serverSyncBadge" class="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-700">
-              <i class="fa-solid fa-database mr-1"></i>서버 DB 연동 + 브라우저 자동저장
+            <span id="serverSyncBadge" class="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700">
+              <i class="fa-solid fa-database mr-1"></i>서버 DB 저장건수: <strong id="serverDbCountLabel">0</strong>건
             </span>
           </div>
           <p class="text-xs text-slate-400">부산환경공단 전 사업소 회전설비 12축 정밀진단 · AI 결함추론 · 반기별 수선성과 통합 플랫폼</p>
@@ -250,15 +503,15 @@ dashboard_html = r"""<!DOCTYPE html>
         </button>
         <button onclick="openUploadModal()" class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-bold py-2 px-3 rounded-lg transition shadow">
           <i class="fa-solid fa-file-excel"></i>
-          <span>사업소 엑셀 업로드</span>
+          <span>엑셀 업로드</span>
         </button>
         <button onclick="openAddModal()" class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-medium py-2 px-3 rounded-lg transition shadow">
           <i class="fa-solid fa-plus"></i>
           <span>설비 직접등록</span>
         </button>
-        <button onclick="downloadServerSyncFile()" class="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs sm:text-sm font-semibold py-2 px-3 rounded-lg border border-cyan-700/60 transition shadow" title="현재 데이터를 서버 DB 공유 파일(.json)로 내려받아 좌측 사이드바에 올리면 전 사업소에 공유됩니다">
+        <button id="btnCopySync" onclick="copyServerSyncCode()" class="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs sm:text-sm font-semibold py-2 px-3 rounded-lg border border-cyan-700/60 transition shadow" title="웹에서 수정한 데이터를 서버 DB에 반영하기 위해 클립보드에 복사합니다">
           <i class="fa-solid fa-cloud-arrow-up"></i>
-          <span>서버DB 공유저장</span>
+          <span>서버반영 코드복사</span>
         </button>
       </div>
     </div>
@@ -288,7 +541,7 @@ dashboard_html = r"""<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- 18개 사업소 탭 스크롤/랩 영역 -->
+      <!-- 18개 사업소 탭 스크롤 영역 -->
       <div class="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pb-1.5 pt-0.5" id="officeTabs"></div>
     </div>
   </header>
@@ -586,8 +839,8 @@ dashboard_html = r"""<!DOCTYPE html>
           <i class="fa-solid fa-file-arrow-up"></i>
         </div>
         <div>
-          <h3 class="text-base font-bold text-white">사업소별 현장 엑셀 스마트 업로드</h3>
-          <p class="text-xs text-slate-400">선택한 사업소 이름으로 상/하반기 시트가 자동 분류되어 저장됩니다.</p>
+          <h3 class="text-base font-bold text-white">사업소별 현장 엑셀 업로드</h3>
+          <p class="text-xs text-slate-400">💡 <strong>타 컴퓨터와 즉시 공유</strong>하려면 <strong>좌측 사이드바</strong>에서 엑셀을 업로드하세요!</p>
         </div>
       </div>
 
@@ -720,17 +973,16 @@ dashboard_html = r"""<!DOCTYPE html>
     let officeList = SERVER_INJECTED_OFFICES;
     let periodList = SERVER_INJECTED_PERIODS;
     let currentPeriod = periodList[0] || '2026년 상반기';
-    let currentOffice = INITIAL_SELECTED_OFFICE || 'ALL';
+    let currentOffice = INITIAL_SELECTED_OFFICE || '에너지사업소';
     let equipmentData = [];
     let currentChartMode = 'trend';
     let vibrationChart = null;
-    let detailChart = null;
-    let detailAxesChart = null;
     let sortCol = 'name';
     let sortAsc = true;
     let currentRepairFilter = 'ALL';
 
     function loadDataWithServerMerge() {
+      document.getElementById('serverDbCountLabel').innerText = SERVER_INJECTED_DATA.length;
       try {
         const localRaw = localStorage.getItem('becovib_enterprise_equip');
         const localPeriods = localStorage.getItem('becovib_enterprise_periods');
@@ -740,19 +992,26 @@ dashboard_html = r"""<!DOCTYPE html>
         }
 
         const mergedMap = {};
-        // 1) 파이썬 서버 DB 데이터 먼저 로드
-        SERVER_INJECTED_DATA.forEach(item => {
-          const key = `${item.office}||${item.period}||${item.name}`;
-          mergedMap[key] = item;
-        });
-        // 2) 브라우저 로컬 작업분 병합
+        // 1) 로컬 작업분을 먼저 넣고
+        let localCount = 0;
         if (localRaw) {
-          JSON.parse(localRaw).forEach(item => {
+          const parsedL = JSON.parse(localRaw);
+          localCount = parsedL.length;
+          parsedL.forEach(item => {
             const key = `${item.office}||${item.period}||${item.name}`;
             mergedMap[key] = item;
           });
         }
+        // 2) 파이썬 서버 DB 데이터를 최신 기준으로 덮어쓰기
+        SERVER_INJECTED_DATA.forEach(item => {
+          const key = `${item.office}||${item.period}||${item.name}`;
+          mergedMap[key] = item;
+        });
+
         equipmentData = Object.values(mergedMap);
+        if (equipmentData.length > SERVER_INJECTED_DATA.length) {
+          document.getElementById('unsyncedAlertBanner').classList.remove('hidden');
+        }
       } catch (e) {
         equipmentData = SERVER_INJECTED_DATA;
       }
@@ -762,23 +1021,25 @@ dashboard_html = r"""<!DOCTYPE html>
       try {
         localStorage.setItem('becovib_enterprise_equip', JSON.stringify(equipmentData));
         localStorage.setItem('becovib_enterprise_periods', JSON.stringify(periodList));
+        if (equipmentData.length !== SERVER_INJECTED_DATA.length) {
+          document.getElementById('unsyncedAlertBanner').classList.remove('hidden');
+        }
       } catch (e) {}
     }
 
-    function downloadServerSyncFile() {
-      const payload = {
+    function copyServerSyncCode() {
+      const payload = JSON.stringify({
         targetOffice: currentOffice,
         equipmentData: equipmentData,
-        periodList: periodList,
-        exportedAt: new Date().toISOString()
-      };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `BECO_VIB_서버동기화_${currentOffice}_${currentPeriod}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+        periodList: periodList
+      });
+      navigator.clipboard.writeText(payload).then(() => {
+        const btn = document.getElementById('btnCopySync');
+        btn.innerHTML = '<i class="fa-solid fa-check mr-1 text-emerald-400"></i>복사완료! 좌측 사이드바에 붙여넣으세요';
+        setTimeout(() => {
+          btn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i><span>서버반영 코드복사</span>';
+        }, 4000);
+      });
     }
 
     function calculateIsoGrade(powerKw, rmsValue, foundation = 'rigid') {
@@ -1133,7 +1394,7 @@ dashboard_html = r"""<!DOCTYPE html>
       document.getElementById('filteredCount').innerText = `총 ${filtered.length}개 설비`;
 
       if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="11" class="text-center py-10 text-slate-500">해당 사업소 및 측정시기에 등록된 설비 데이터가 없습니다. 우측 상단 [사업소 엑셀 업로드]를 눌러 등록하세요.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="11" class="text-center py-10 text-slate-400">해당 사업소 및 측정시기에 등록된 데이터가 없습니다.<br><span class="text-cyan-400 font-bold">좌측 사이드바의 [서버 DB에 엑셀 직접 업로드]</span>를 이용하시면 모든 PC에서 즉시 공유됩니다!</td></tr>`;
         return;
       }
 
@@ -1177,7 +1438,6 @@ dashboard_html = r"""<!DOCTYPE html>
       }).join('');
     }
 
-    // 18개 사업소 총괄 현황 모달
     function openOfficeOverviewModal() {
       const grid = document.getElementById('officeOverviewGrid');
       grid.innerHTML = officeList.map(off => {
@@ -1206,7 +1466,6 @@ dashboard_html = r"""<!DOCTYPE html>
     }
     function closeOfficeOverviewModal() { document.getElementById('officeOverviewModal').classList.add('hidden'); }
 
-    // 엑셀 업로드 모달 및 파서
     function openUploadModal() {
       renderOfficeTabs();
       document.getElementById('uploadModal').classList.remove('hidden');
@@ -1347,13 +1606,14 @@ dashboard_html = r"""<!DOCTYPE html>
           currentOffice = uploadOffice;
           if (foundPeriods.length > 0) currentPeriod = foundPeriods[0];
           saveToLocalStorage();
+          copyServerSyncCode();
           renderPeriodSelectors();
           renderOfficeTabs();
           updateDashboard();
 
           statusBox.className = 'p-3 rounded-lg border text-xs bg-emerald-950/30 border-emerald-500/40 text-emerald-300 font-bold';
-          statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>[${uploadOffice}] 업로드 완료 (${summaryMsg.join(' / ')})`;
-          setTimeout(() => closeUploadModal(), 1800);
+          statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>[${uploadOffice}] 파싱 완료 (${summaryMsg.join(' / ')})<br><span class="text-amber-300">※ 서버반영 코드가 자동 복사되었습니다! 좌측 사이드바에서 바로 엑셀을 올리시면 이 과정 없이 즉시 공유됩니다.</span>`;
+          setTimeout(() => closeUploadModal(), 2500);
         } catch (err) {
           statusBox.className = 'p-3 rounded-lg border text-xs bg-rose-950/30 border-rose-500/40 text-rose-300';
           statusBox.innerHTML = '엑셀 파싱 실패: 파일 형식을 확인해 주세요.';
@@ -1362,7 +1622,6 @@ dashboard_html = r"""<!DOCTYPE html>
       reader.readAsArrayBuffer(file);
     }
 
-    // 수선/AI 요약시트 로직
     function openRepairSummaryModal() {
       const bSel = document.getElementById('sumBasePeriod');
       const tSel = document.getElementById('sumTargetPeriod');
@@ -1476,7 +1735,7 @@ dashboard_html = r"""<!DOCTYPE html>
       const maxRms = Math.max(pts.m_de.h, pts.m_de.v, pts.m_de.a, pts.m_nde.h, pts.m_nde.v, pts.m_nde.a, pts.p_de.h, pts.p_de.v, pts.p_de.a, pts.p_nde.h, pts.p_nde.v, pts.p_nde.a);
       const res = calculateIsoGrade(power, maxRms, 'rigid');
       equipmentData.unshift({
-        id: `${office}_${period}_${name}_${Date.now()}`,
+        id: `${office}_${period}_${name}`,
         office, period, name, power, group: res.group, overallGrade: res.grade, maxRms, points: pts,
         summary: document.getElementById('inpSummary').value || '직접 등록',
         action: document.getElementById('inpAction').value || '추세 관리'
