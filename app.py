@@ -252,13 +252,21 @@ dashboard_html = r"""<!DOCTYPE html>
             <p class="text-xs text-slate-400" id="chartSubTitle">과거 반기 측정치 누적 변화와 ISO 20816-3 경보 기준치 비교</p>
           </div>
           
-          <div class="flex items-center gap-1.5 bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs">
-            <button id="btnModeTrend" onclick="setChartMode('trend')" class="px-3 py-1 rounded font-bold bg-cyan-600 text-white transition">
-              <i class="fa-solid fa-chart-line mr-1"></i>반기별 추이선
-            </button>
-            <button id="btnModeBar" onclick="setChartMode('bar')" class="px-3 py-1 rounded font-medium text-slate-300 hover:text-white transition">
-              <i class="fa-solid fa-chart-simple mr-1"></i>현재 상태 막대
-            </button>
+          <div class="flex flex-wrap items-center gap-2">
+            <!-- Trend Target Filter Dropdown -->
+            <select id="trendTargetFilter" onchange="renderChart()" class="bg-slate-800 border border-slate-700 text-cyan-300 text-xs font-semibold rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer">
+              <option value="CD_ONLY">🚨 C·D등급(주의/위험) 이력 설비만</option>
+              <option value="TOP_RMS">🔥 진동 상위 7대 설비</option>
+            </select>
+
+            <div class="flex items-center gap-1.5 bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs">
+              <button id="btnModeTrend" onclick="setChartMode('trend')" class="px-3 py-1 rounded font-bold bg-cyan-600 text-white transition">
+                <i class="fa-solid fa-chart-line mr-1"></i>반기별 추이선
+              </button>
+              <button id="btnModeBar" onclick="setChartMode('bar')" class="px-3 py-1 rounded font-medium text-slate-300 hover:text-white transition">
+                <i class="fa-solid fa-chart-simple mr-1"></i>현재 상태 막대
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1567,19 +1575,53 @@ dashboard_html = r"""<!DOCTYPE html>
       currentChartMode = mode;
       const btnTrend = document.getElementById('btnModeTrend');
       const btnBar = document.getElementById('btnModeBar');
+      const trendFilter = document.getElementById('trendTargetFilter');
 
       if (mode === 'trend') {
         btnTrend.className = 'px-3 py-1 rounded font-bold bg-cyan-600 text-white transition';
         btnBar.className = 'px-3 py-1 rounded font-medium text-slate-300 hover:text-white transition';
+        if (trendFilter) trendFilter.classList.remove('hidden');
         document.getElementById('chartMainTitle').innerText = '주요 설비 반기별 진동 추세선 (Trend)';
-        document.getElementById('chartSubTitle').innerText = '과거 반기 측정치 누적 변화와 ISO 20816-3 경보 기준치 비교';
+        document.getElementById('chartSubTitle').innerText = 'C·D등급(주의/위험) 이력 설비 또는 선택한 개별 설비의 반기별 추이 비교';
       } else {
         btnBar.className = 'px-3 py-1 rounded font-bold bg-cyan-600 text-white transition';
         btnTrend.className = 'px-3 py-1 rounded font-medium text-slate-300 hover:text-white transition';
+        if (trendFilter) trendFilter.classList.add('hidden');
         document.getElementById('chartMainTitle').innerText = `${currentPeriod} 설비별 최대 진동치 현황`;
         document.getElementById('chartSubTitle').innerText = '현 주기 대상 설비의 실측 진동값 vs ISO 20816-3 경보 기준 비교';
       }
       renderChart();
+    }
+
+    function updateTrendFilterDropdown() {
+      const sel = document.getElementById('trendTargetFilter');
+      if (!sel) return;
+      const prevVal = sel.value || 'CD_ONLY';
+
+      // 현재 사업소의 고유 설비명 목록 추출 (가나다순)
+      const officeEquipNames = Array.from(new Set(
+        equipmentData
+          .filter(e => currentOffice === 'ALL' || e.office === currentOffice)
+          .map(e => e.name)
+      )).sort((a, b) => a.localeCompare(b, 'ko'));
+
+      let html = `
+        <option value="CD_ONLY">🚨 C·D등급(주의/위험) 이력 설비만 보기</option>
+        <option value="D_ONLY">⛔ D등급(즉시점검) 이력 설비만 보기</option>
+        <option value="TOP_RMS">🔥 최대 진동 상위 7대 보기</option>
+        <optgroup label="── 개별 설비 직접 선택 ──">
+      `;
+      officeEquipNames.forEach(name => {
+        html += `<option value="EQ:${name}">🔍 ${name}</option>`;
+      });
+      html += `</optgroup>`;
+
+      sel.innerHTML = html;
+      if ([...sel.options].some(o => o.value === prevVal)) {
+        sel.value = prevVal;
+      } else {
+        sel.value = 'CD_ONLY';
+      }
     }
 
     function updateDashboard() {
@@ -1604,12 +1646,13 @@ dashboard_html = r"""<!DOCTYPE html>
       document.getElementById('metric-d').innerText = gradeD;
       document.getElementById('metric-stop').innerText = stopUnits;
 
-      const stopNames = activeData.filter(e => (parseFloat(e.maxRms) || 0) === 0).map(e => e.name).slice(0, 3).join(', ');
+      const stopNames = activeData.filter(e => (parseFloat(e.maxRms) || 0) === 0).map(e => e.name).slice(0, 4).join(', ');
       document.getElementById('metric-stop-desc').innerText = stopUnits > 0 ? stopNames : '미측정/정비 설비 없음';
 
       const pct = operatedData.length > 0 ? Math.round(((gradeA + gradeB) / operatedData.length) * 100) : 0;
       document.getElementById('metric-ab-pct').innerText = pct + '%';
 
+      updateTrendFilterDropdown();
       renderTable();
       renderChart();
     }
@@ -1625,24 +1668,65 @@ dashboard_html = r"""<!DOCTYPE html>
       if (vibrationChart) vibrationChart.destroy();
 
       if (currentChartMode === 'trend') {
-        const targetEquipList = (activeData.length > 0 ? activeData : equipmentData).slice(0, 5);
-        const colorPalette = ['#ef4444', '#f59e0b', '#06b6d4', '#10b981', '#8b5cf6'];
+        const filterMode = document.getElementById('trendTargetFilter')?.value || 'CD_ONLY';
 
-        const datasets = targetEquipList.map((eq, idx) => {
-          const trendData = periodList.map(p => {
-            if (eq.history && eq.history[p] !== undefined) return eq.history[p];
-            return eq.period === p ? eq.maxRms : null;
-          });
+        // 사업소 내 설비들을 이름 기준으로 통합(상/하반기 중 한 번이라도 C/D였는지 등 확인)
+        const equipMap = {};
+        equipmentData.forEach(e => {
+          if (currentOffice !== 'ALL' && e.office !== currentOffice) return;
+          const key = `${e.office}||${e.name}`;
+          if (!equipMap[key]) {
+            equipMap[key] = {
+              name: e.name,
+              office: e.office,
+              power: e.power,
+              group: e.group,
+              maxEverRms: 0,
+              hadCD: false,
+              hadD: false,
+              history: {}
+            };
+          }
+          const val = parseFloat(e.maxRms) || 0;
+          if (val > equipMap[key].maxEverRms) equipMap[key].maxEverRms = val;
+          if (e.overallGrade === 'C' || e.overallGrade === 'D') equipMap[key].hadCD = true;
+          if (e.overallGrade === 'D') equipMap[key].hadD = true;
+          if (e.period) {
+            equipMap[key].history[e.period] = val > 0 ? val : null;
+          }
+          if (e.history) {
+            Object.keys(e.history).forEach(p => {
+              if (e.history[p] > 0) equipMap[key].history[p] = e.history[p];
+            });
+          }
+        });
 
+        let candidates = Object.values(equipMap);
+
+        if (filterMode.startsWith('EQ:')) {
+          const targetName = filterMode.replace('EQ:', '');
+          candidates = candidates.filter(c => c.name === targetName);
+        } else if (filterMode === 'D_ONLY') {
+          candidates = candidates.filter(c => c.hadD).sort((a, b) => b.maxEverRms - a.maxEverRms).slice(0, 10);
+        } else if (filterMode === 'CD_ONLY') {
+          candidates = candidates.filter(c => c.hadCD).sort((a, b) => b.maxEverRms - a.maxEverRms).slice(0, 10);
+        } else {
+          candidates = candidates.sort((a, b) => b.maxEverRms - a.maxEverRms).slice(0, 7);
+        }
+
+        const colorPalette = ['#ef4444', '#f59e0b', '#06b6d4', '#10b981', '#8b5cf6', '#ec4899', '#3b82f6', '#eab308', '#14b8a6', '#f97316'];
+
+        const datasets = candidates.map((eq, idx) => {
+          const trendData = periodList.map(p => (eq.history[p] !== undefined ? eq.history[p] : null));
           return {
-            label: `${eq.name} (${eq.office.replace('사업소','')})`,
+            label: `${eq.name}`,
             data: trendData,
             borderColor: colorPalette[idx % colorPalette.length],
             backgroundColor: colorPalette[idx % colorPalette.length],
             borderWidth: 2.5,
-            pointRadius: 4.5,
+            pointRadius: 5,
             pointHoverRadius: 7,
-            tension: 0.3,
+            tension: 0.25,
             spanGaps: true
           };
         });
@@ -1669,7 +1753,7 @@ dashboard_html = r"""<!DOCTYPE html>
                 borderWidth: 1,
                 callbacks: {
                   label: function(c) {
-                    return `${c.dataset.label}: ${c.parsed.y !== null ? c.parsed.y + ' mm/s' : '미측정'}`;
+                    return `${c.dataset.label}: ${c.parsed.y !== null ? c.parsed.y + ' mm/s' : '미가동/미측정'}`;
                   }
                 }
               }
@@ -1680,8 +1764,8 @@ dashboard_html = r"""<!DOCTYPE html>
                 ticks: { color: '#94a3b8', font: { size: 11 } }
               },
               y: {
-                min: 0,
-                max: 9,
+                beginAtZero: true,
+                suggestedMax: 9,
                 grid: { color: 'rgba(51, 65, 85, 0.3)' },
                 ticks: {
                   color: '#94a3b8',
@@ -1855,14 +1939,14 @@ dashboard_html = r"""<!DOCTYPE html>
               ${item.name}
             </td>
             <td class="py-3 px-3 font-mono text-cyan-300 font-semibold">${item.power} kW</td>
-            <td class="py-3 px-3 text-center font-mono font-bold text-amber-300">${motorMax.toFixed(2)}</td>
-            <td class="py-3 px-3 text-center font-mono font-bold text-cyan-300">${pumpMax.toFixed(2)}</td>
-            <td class="py-3 px-3 text-center font-mono font-black ${item.overallGrade === 'D' ? 'text-red-400' : (item.overallGrade === 'C' ? 'text-amber-400' : 'text-emerald-400')}">
-              ${parseFloat(item.maxRms).toFixed(2)}
+            <td class="py-3 px-3 text-center font-mono font-bold text-amber-300">${item.maxRms === 0 ? '-' : motorMax.toFixed(2)}</td>
+            <td class="py-3 px-3 text-center font-mono font-bold text-cyan-300">${item.maxRms === 0 ? '-' : pumpMax.toFixed(2)}</td>
+            <td class="py-3 px-3 text-center font-mono font-black ${item.maxRms === 0 ? 'text-slate-500' : (item.overallGrade === 'D' ? 'text-red-400' : (item.overallGrade === 'C' ? 'text-amber-400' : 'text-emerald-400'))}">
+              ${item.maxRms === 0 ? '가동정지' : parseFloat(item.maxRms).toFixed(2)}
             </td>
             <td class="py-3 px-3 text-center">
-              <span class="inline-block px-2.5 py-1 rounded text-[11px] font-bold ${badgeClass}">
-                ${badgeLabel}
+              <span class="inline-block px-2.5 py-1 rounded text-[11px] font-bold ${item.maxRms === 0 ? 'bg-slate-800 text-slate-400 border border-slate-600' : badgeClass}">
+                ${item.maxRms === 0 ? '미가동' : badgeLabel}
               </span>
             </td>
             <td class="py-3 px-4 text-slate-300 max-w-xs truncate" title="${item.summary}">
@@ -2514,12 +2598,13 @@ dashboard_html = r"""<!DOCTYPE html>
             else if (sheetName.includes('하반기')) sheetPeriod = `${yearStr} 하반기`;
 
             if (!periodList.includes(sheetPeriod)) periodList.push(sheetPeriod);
-            if (!parsedBySheet[sheetPeriod]) parsedBySheet[sheetPeriod] = [];
+            if (!parsedBySheet[sheetPeriod]) parsedBySheet[sheetPeriod] = {};
 
             const worksheet = workbook.Sheets[sheetName];
             const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
             
             let currentEquip = null;
+            let lastValidPower = 55;
             let isHeaderFound = false;
 
             for (let i = 0; i < jsonData.length; i++) {
@@ -2534,53 +2619,86 @@ dashboard_html = r"""<!DOCTYPE html>
 
               if (!isHeaderFound) continue;
 
-              let equipName = String(row[1] || '').trim();
+              // 설비명 공백 정규화 (예: "FD Fan  #1" -> "FD Fan #1")
+              let equipName = String(row[1] || '').trim().replace(/\s+/g, ' ');
+              let powerVal = parseFloat(row[2]);
+              if (!isNaN(powerVal) && powerVal > 0) {
+                lastValidPower = powerVal;
+              }
+
               let pointStr = String(row[3] || '').trim().replace(/\s/g, '');
               let axisStr = String(row[4] || '').toLowerCase().trim();
+              let causeStr = String(row[8] || '').trim();
+              let actionStr = String(row[9] || '').trim();
 
-              // 하단 안내문구, 결재란, 비고란 등 실제 설비가 아닌 행 완벽 차단
+              // 하단 안내문구, 결재란, 페이지 표시 등 실제 설비가 아닌 행 차단
               const isGarbageName = equipName.length > 28 || 
                                     equipName.includes('점검실시') || 
                                     equipName.includes('업데이트') || 
                                     equipName.includes('비고') || 
                                     equipName === '반기' || 
+                                    equipName.includes('페이지') ||
                                     equipName.includes('결재');
 
-              if (isGarbageName) continue;
-
-              // 측정위치 열(D열)에 전동기/펌프/송풍기/부하/1~4 숫자가 있는지 확인
-              const hasPointFormat = pointStr.includes('전동기') || pointStr.includes('펌프') || pointStr.includes('송풍기') || pointStr.includes('부하') || /^[1-4]/.test(pointStr);
-
-              // 새로운 설비명이 등장했고, 측정위치 포맷이 유효한 경우 새 설비 블록 시작
-              if (equipName !== '' && equipName !== '설비명' && hasPointFormat) {
-                if (currentEquip) parsedBySheet[sheetPeriod].push(currentEquip);
-                currentEquip = {
-                  name: equipName,
-                  period: sheetPeriod,
-                  power: parseFloat(row[2]) || (currentEquip ? currentEquip.power : 55),
-                  points: {
-                    m_de: { h: 0, v: 0, a: 0 }, m_nde: { h: 0, v: 0, a: 0 },
-                    p_de: { h: 0, v: 0, a: 0 }, p_nde: { h: 0, v: 0, a: 0 }
-                  },
-                  summary: '',
-                  action: '',
-                  isValidEquip: true // 미가동(진동값 빈칸)이어도 설비 대수에서 누락되지 않도록 보존!
-                };
+              if (isGarbageName) {
+                currentEquip = null;
+                continue;
               }
 
-              if (!currentEquip || !hasPointFormat) continue;
+              // 측정위치 열(D열)에 전동기/펌프/송풍기/부하/1~4 숫자가 있거나 '가동정지/미가동/정비' 등 상태가 적혀있는지 확인
+              const hasPointFormat = pointStr.includes('전동기') || 
+                                     pointStr.includes('펌프') || 
+                                     pointStr.includes('송풍기') || 
+                                     pointStr.includes('부하') || 
+                                     /^[1-4]/.test(pointStr) ||
+                                     pointStr.includes('가동정지') ||
+                                     pointStr.includes('미가동') ||
+                                     pointStr.includes('정비') ||
+                                     pointStr.includes('수리') ||
+                                     pointStr.includes('고장') ||
+                                     pointStr.includes('휴지') ||
+                                     pointStr.includes('대기');
+
+              // 새로운 설비명이 등장한 경우 (가동정지 등 한 줄짜리 설비도 절대 누락하지 않고 100% 등록!)
+              if (equipName !== '' && equipName !== '설비명') {
+                // 이미 같은 시트에서 등록된 설비명이라면(페이지 나눔이나 부하별 중복 기재), 새로 늘리지 않고 기존 설비에 병합!
+                if (!parsedBySheet[sheetPeriod][equipName]) {
+                  parsedBySheet[sheetPeriod][equipName] = {
+                    name: equipName,
+                    period: sheetPeriod,
+                    power: lastValidPower,
+                    points: {
+                      m_de: { h: 0, v: 0, a: 0 }, m_nde: { h: 0, v: 0, a: 0 },
+                      p_de: { h: 0, v: 0, a: 0 }, p_nde: { h: 0, v: 0, a: 0 }
+                    },
+                    summary: '',
+                    action: '',
+                    isStopped: pointStr.includes('가동정지') || pointStr.includes('미가동')
+                  };
+                }
+                currentEquip = parsedBySheet[sheetPeriod][equipName];
+                if (!isNaN(powerVal) && powerVal > 0) currentEquip.power = powerVal;
+              }
+
+              if (!currentEquip) continue;
+
+              // 가동정지/미가동 문구가 있으면 요약에 기록
+              if (pointStr.includes('가동정지') || pointStr.includes('미가동')) {
+                currentEquip.isStopped = true;
+                if (!currentEquip.summary.includes('가동정지')) {
+                  currentEquip.summary = '가동정지' + (causeStr ? ` (${causeStr})` : '');
+                }
+              }
 
               let rmsVal = parseFloat(row[5]);
-              let causeStr = String(row[8] || '').trim();
-              let actionStr = String(row[9] || '').trim();
 
               // 비정상 오인식 숫자(날짜 시리얼 등 50 이상) 제외하고 정상 진동치만 반영
-              if (!isNaN(rmsVal) && rmsVal >= 0 && rmsVal < 50) {
+              if (hasPointFormat && !isNaN(rmsVal) && rmsVal >= 0 && rmsVal < 50) {
                 let targetPoint = null;
                 if (pointStr.includes('전동기') && pointStr.includes('반부하')) targetPoint = currentEquip.points.m_nde;
-                else if (pointStr.includes('전동기')) targetPoint = currentEquip.points.m_de;
-                else if ((pointStr.includes('펌프') || pointStr.includes('송풍기')) && pointStr.includes('반부하')) targetPoint = currentEquip.points.p_nde;
-                else if (pointStr.includes('펌프') || pointStr.includes('송풍기')) targetPoint = currentEquip.points.p_de;
+                else if (pointStr.includes('전동기') || pointStr.startsWith('1') || pointStr.startsWith('2')) targetPoint = pointStr.includes('반부하') ? currentEquip.points.m_nde : currentEquip.points.m_de;
+                else if ((pointStr.includes('펌프') || pointStr.includes('송풍기') || pointStr.startsWith('3') || pointStr.startsWith('4')) && pointStr.includes('반부하')) targetPoint = currentEquip.points.p_nde;
+                else if (pointStr.includes('펌프') || pointStr.includes('송풍기') || pointStr.startsWith('3') || pointStr.startsWith('4')) targetPoint = currentEquip.points.p_de;
 
                 if (targetPoint) {
                   if (axisStr === 'x' || axisStr === 'h') targetPoint.h = Math.max(targetPoint.h, rmsVal);
@@ -2596,12 +2714,9 @@ dashboard_html = r"""<!DOCTYPE html>
                 currentEquip.action += (currentEquip.action ? ', ' : '') + actionStr;
               }
             }
-            if (currentEquip && currentEquip.isValidEquip) {
-              parsedBySheet[sheetPeriod].push(currentEquip);
-            }
           }
 
-          const allPeriodsFound = Object.keys(parsedBySheet).filter(k => parsedBySheet[k].length > 0);
+          const allPeriodsFound = Object.keys(parsedBySheet).filter(k => Object.keys(parsedBySheet[k]).length > 0);
 
           if (allPeriodsFound.length === 0) {
             statusBox.className = 'p-3 rounded-lg border text-xs bg-amber-950/20 border-amber-500/40 text-amber-400';
@@ -2613,8 +2728,8 @@ dashboard_html = r"""<!DOCTYPE html>
 
           // 2. 시트별(상반기/하반기) 기존 중복 데이터를 깨끗이 비우고 새 데이터로 교체 등록
           allPeriodsFound.forEach(pKey => {
-            const list = parsedBySheet[pKey];
-            // 해당 사업소 + 해당 시기의 기존 데이터를 지우고 새로 덮어씌움 (중복 뻥튀기 방지)
+            const list = Object.values(parsedBySheet[pKey]);
+            // 해당 사업소 + 해당 시기의 기존 데이터를 지우고 새로 덮어씌움
             equipmentData = equipmentData.filter(e => !(e.office === uploadOffice && e.period === pKey));
 
             list.forEach((eq, idx) => {
@@ -2642,8 +2757,8 @@ dashboard_html = r"""<!DOCTYPE html>
                   pump:  { h: Math.max(p.p_de.h, p.p_nde.h), v: Math.max(p.p_de.v, p.p_nde.v), a: Math.max(p.p_de.a, p.p_nde.a) }
                 },
                 history: historyObj,
-                summary: maxRms === 0 ? (eq.summary || '미가동 / 정비대기') : (eq.summary || '측정 완료'),
-                action: eq.action || '추세 관리',
+                summary: maxRms === 0 ? (eq.summary || '가동정지 / 미가동') : (eq.summary || '측정 완료'),
+                action: maxRms === 0 ? (eq.action || '정비 대기') : (eq.action || '추세 관리'),
                 detailNotes: '다중 시트 파싱 등록'
               });
             });
