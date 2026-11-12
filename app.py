@@ -738,8 +738,8 @@ dashboard_html = r"""<!DOCTYPE html>
           <i class="fa-solid fa-file-arrow-up"></i>
         </div>
         <div>
-          <h3 class="text-base font-bold text-white">현장 엑셀 시트 스마트 업로드</h3>
-          <p class="text-xs text-slate-400">파일 내 다중 시트를 분석하여 상반기/하반기 데이터를 자동으로 분리 추출합니다.</p>
+          <h3 class="text-base font-bold text-white">표준 양식 엑셀 업로드</h3>
+          <p class="text-xs text-slate-400">반드시 시스템에서 다운로드한 [표준 양식] 엑셀 파일을 사용하여 업로드해 주세요.</p>
         </div>
       </div>
 
@@ -763,7 +763,7 @@ dashboard_html = r"""<!DOCTYPE html>
         <div id="dropZone" onclick="document.getElementById('fileInput').click()" class="border-2 border-dashed border-slate-600 hover:border-cyan-500 rounded-2xl p-8 text-center cursor-pointer transition bg-slate-800/40 hover:bg-slate-800/70">
           <i class="fa-solid fa-cloud-arrow-up text-3xl text-cyan-400 mb-2"></i>
           <p class="text-slate-200 font-bold mb-1">엑셀(.xlsx, .xls) 또는 CSV 파일을 여기로 드래그하세요</p>
-          <p class="text-slate-400 text-[11px]">시트명 [진동측정결과] 자동 인식 및 파싱</p>
+          <p class="text-slate-400 text-[11px]">반드시 시스템 표준 양식 사용</p>
           <input type="file" id="fileInput" accept=".xlsx, .xls, .csv" onchange="handleFileSelect(event)" class="hidden">
         </div>
 
@@ -2523,9 +2523,9 @@ dashboard_html = r"""<!DOCTYPE html>
 
     function processDataFile(file) {
       const statusBox = document.getElementById('uploadStatusBox');
-      const targetPeriodFromDropdown = document.getElementById('uploadPeriodSelect').value;
+      const targetPeriod = document.getElementById('uploadPeriodSelect').value;
       statusBox.classList.remove('hidden');
-      statusBox.innerHTML = `<span class="text-cyan-400 font-semibold"><i class="fa-solid fa-spinner fa-spin mr-1"></i>파일 파싱 및 스마트 분석 중: ${file.name}</span>`;
+      statusBox.innerHTML = `<span class="text-cyan-400 font-semibold"><i class="fa-solid fa-spinner fa-spin mr-1"></i>표준 양식 데이터 분석 중: ${file.name}</span>`;
 
       const reader = new FileReader();
 
@@ -2534,177 +2534,123 @@ dashboard_html = r"""<!DOCTYPE html>
           const data = new Uint8Array(e.target.result);
           const workbook = XLSX.read(data, { type: 'array' });
           
+          let targetSheetName = workbook.SheetNames[0];
+          for (let name of workbook.SheetNames) {
+            if (name.includes('진동측정결과')) {
+              targetSheetName = name;
+              break;
+            }
+          }
+
+          const worksheet = workbook.Sheets[targetSheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+
+          // 표준 양식의 헤더행 찾기
+          let headerIdx = -1;
+          for (let r = 0; r < Math.min(jsonData.length, 10); r++) {
+            const rowStr = jsonData[r].join('').replace(/\s/g, '');
+            if (rowStr.includes('사업소') && rowStr.includes('설비명') && rowStr.includes('용량')) {
+              headerIdx = r;
+              break;
+            }
+          }
+
+          if (headerIdx === -1) {
+            statusBox.className = 'p-3 rounded-lg border text-xs bg-red-950/20 border-red-500/40 text-red-400';
+            statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>표준 양식이 아닙니다. [양식 다운로드] 버튼을 눌러 지정된 양식을 사용해 주세요.`;
+            return;
+          }
+
           let addedCount = 0;
-          let parsedSheets = [];
 
-          // 1. 모든 시트를 순회하며 상반기/하반기 다중 시트 일괄 처리
-          for (let sheetName of workbook.SheetNames) {
+          // 헤더 다음 줄부터 읽기 시작 (가로 1행 = 1설비)
+          for (let i = headerIdx + 1; i < jsonData.length; i++) {
+            const row = jsonData[i];
+            if (!row || row.length < 3) continue;
+
+            let office = String(row[0]).trim();
+            let name = String(row[1]).trim();
+            if (!name || name === '-' || name.includes('설비명')) continue;
+
+            let power = parseFloat(row[2]) || 55;
             
-            // 시트 이름에서 주기(Period) 자동 추출
-            let currentPeriod = targetPeriodFromDropdown;
-            if (sheetName.includes('상반기') || sheetName.includes('하반기')) {
-              let yearMatch = sheetName.match(/(\d{2,4})년?/);
-              let halfMatch = sheetName.match(/(상반기|하반기)/);
-              if (yearMatch && halfMatch) {
-                let year = yearMatch[1].length === 2 ? '20' + yearMatch[1] : yearMatch[1];
-                currentPeriod = `${year}년 ${halfMatch[1]}`;
-              } else {
-                currentPeriod = sheetName;
-              }
-            } else if (workbook.SheetNames.length > 1 && !sheetName.includes('진동') && !sheetName.includes('측정') && !sheetName.includes('결과')) {
-              // 진동측정 시트가 아닌 표지, 개요 등은 스킵
-              continue;
-            }
+            // 12축 데이터 추출 (3열 ~ 14열)
+            let m_de_h = parseFloat(row[3]) || 0;
+            let m_de_v = parseFloat(row[4]) || 0;
+            let m_de_a = parseFloat(row[5]) || 0;
+            let m_nde_h = parseFloat(row[6]) || 0;
+            let m_nde_v = parseFloat(row[7]) || 0;
+            let m_nde_a = parseFloat(row[8]) || 0;
+            let p_de_h = parseFloat(row[9]) || 0;
+            let p_de_v = parseFloat(row[10]) || 0;
+            let p_de_a = parseFloat(row[11]) || 0;
+            let p_nde_h = parseFloat(row[12]) || 0;
+            let p_nde_v = parseFloat(row[13]) || 0;
+            let p_nde_a = parseFloat(row[14]) || 0;
 
-            const worksheet = workbook.Sheets[sheetName];
-            const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }); 
-            if (jsonData.length < 2) continue;
+            let summary = String(row[15] || '').trim() || '측정 완료';
+            let action = String(row[16] || '').trim() || '추세 관리';
+            let period = String(row[17] || '').trim() || targetPeriod;
 
-            parsedSheets.push(sheetName);
+            let maxRms = Math.max(m_de_h, m_de_v, m_de_a, m_nde_h, m_nde_v, m_nde_a, p_de_h, p_de_v, p_de_a, p_nde_h, p_nde_v, p_nde_a);
 
-            // 2. 동적 컬럼 매핑 (현장 엑셀 양식이 다를 경우 '설비명' 위치 자동 추적)
-            let headerIdx = -1;
-            let colName = 1, colPower = 2, colOffice = 0; 
-            
-            for (let r = 0; r < Math.min(jsonData.length, 15); r++) {
-              const rowData = jsonData[r] || [];
-              const rowStr = rowData.join('').replace(/\s/g, '');
-              if (rowStr.includes('설비명') || rowStr.includes('기기명')) {
-                headerIdx = r;
-                for (let c = 0; c < rowData.length; c++) {
-                  let cellVal = String(rowData[c]).replace(/\s/g, '');
-                  if (cellVal.includes('설비명') || cellVal.includes('기기명')) colName = c;
-                  if (cellVal.includes('용량') || cellVal.includes('kW') || cellVal.includes('동력')) colPower = c;
-                  if (cellVal.includes('사업소') || cellVal.includes('처리장')) colOffice = c;
-                }
-                break;
-              }
-            }
+            if (!periodList.includes(period)) periodList.push(period);
+            ensureOfficeRegistered(office);
+            const evalRes = calculateIsoGrade(power, maxRms, 'rigid');
 
-            let startRow = headerIdx !== -1 ? headerIdx + 1 : 1;
-            // 값 없는 병합 헤더 스킵
-            while(startRow < jsonData.length) {
-              let testName = String(jsonData[startRow][colName] || '').trim();
-              if (testName && testName !== '설비명' && !testName.includes('단위')) break;
-              startRow++;
-            }
+            let historyObj = {};
+            historyObj[period] = maxRms;
 
-            // 3. 데이터 파싱
-            for (let i = startRow; i < jsonData.length; i++) {
-              const row = jsonData[i];
-              if (!row || row.length === 0) continue;
-
-              let name = String(row[colName] || '').trim();
-              
-              // [중요] 설비명이 비어있거나 '미지정 설비' 등 불량 텍스트면 스킵
-              if (!name || name === '-' || name === '미지정 설비' || name.includes('설비명')) continue;
-
-              let office = String(row[colOffice] || '').trim();
-              if (!office || office === '-' || office.length > 10) office = '에너지사업소';
-
-              let power = parseFloat(row[colPower]);
-              if (isNaN(power)) power = 55;
-
-              // 숫자 진동값(RMS) 동적 추출: 설비명/용량 컬럼 이후 등장하는 숫자 수집
-              let rmsValues = [];
-              let startExtractCol = Math.max(colName, colPower) + 1;
-              for(let c = startExtractCol; c < row.length; c++) {
-                  let val = parseFloat(row[c]);
-                  // [중요 필터] 50 이상은 엑셀 날짜, 일련번호 오인식으로 간주 (80.00 등의 에러 방지)
-                  if(!isNaN(val) && val >= 0 && val < 50) {
-                      rmsValues.push(val);
-                  }
-              }
-
-              // 12축 매핑 (값이 모자라면 0으로 패딩)
-              while(rmsValues.length < 12) rmsValues.push(0);
-
-              let m_de_h = rmsValues[0], m_de_v = rmsValues[1], m_de_a = rmsValues[2];
-              let m_nde_h = rmsValues[3], m_nde_v = rmsValues[4], m_nde_a = rmsValues[5];
-              let p_de_h = rmsValues[6], p_de_v = rmsValues[7], p_de_a = rmsValues[8];
-              let p_nde_h = rmsValues[9], p_nde_v = rmsValues[10], p_nde_a = rmsValues[11];
-              
-              let maxRms = Math.max(...rmsValues);
-              if (maxRms === 0) maxRms = 1.0; 
-
-              // 추가 정보 처리 (비고란 탐색)
-              let summary = '측정 완료 (자동 파싱)';
-              let action = '추세 관리';
-              
-              for(let c = row.length - 1; c > startExtractCol; c--) {
-                  let txt = String(row[c] || '').trim();
-                  if (txt && isNaN(parseFloat(txt)) && txt.length > 3) {
-                      if(txt.includes('보수') || txt.includes('점검') || txt.includes('관리')) action = txt;
-                      else if (!summary.includes('자동 파싱')) summary = txt;
-                      else summary = txt;
-                  }
-              }
-
-              if (!periodList.includes(currentPeriod)) periodList.push(currentPeriod);
-              ensureOfficeRegistered(office);
-              const evalRes = calculateIsoGrade(power, maxRms, 'rigid');
-
-              let historyObj = {};
-              historyObj[currentPeriod] = maxRms;
-
-              equipmentData.unshift({
-                id: 'imp_' + Date.now() + '_' + addedCount + '_' + i,
-                period: currentPeriod,
-                office: office,
-                name: name,
-                power: power,
-                group: evalRes.group,
-                foundation: 'rigid',
-                totalQty: 1,
-                unoperated: '-',
-                overallGrade: evalRes.grade,
-                maxRms: maxRms,
-                points: {
-                  m_de:  { h: m_de_h, v: m_de_v, a: m_de_a },
-                  m_nde: { h: m_nde_h, v: m_nde_v, a: m_nde_a },
-                  p_de:  { h: p_de_h, v: p_de_v, a: p_de_a },
-                  p_nde: { h: p_nde_h, v: p_nde_v, a: p_nde_a }
-                },
-                axes: {
-                  motor: { h: Math.max(m_de_h, m_nde_h), v: Math.max(m_de_v, m_nde_v), a: Math.max(m_de_a, m_nde_a) },
-                  pump:  { h: Math.max(p_de_h, p_nde_h), v: Math.max(p_de_v, p_nde_v), a: Math.max(p_de_a, p_nde_a) }
-                },
-                history: historyObj,
-                summary: summary,
-                action: action,
-                detailNotes: `시트 [${sheetName}]에서 자동 추출된 데이터`
-              });
-              addedCount++;
-            }
+            equipmentData.unshift({
+              id: 'imp_' + Date.now() + '_' + i,
+              period: period,
+              office: office || '에너지사업소',
+              name: name,
+              power: power,
+              group: evalRes.group,
+              foundation: 'rigid',
+              totalQty: 1,
+              unoperated: '-',
+              overallGrade: evalRes.grade,
+              maxRms: maxRms,
+              points: {
+                m_de:  { h: m_de_h, v: m_de_v, a: m_de_a },
+                m_nde: { h: m_nde_h, v: m_nde_v, a: m_nde_a },
+                p_de:  { h: p_de_h, v: p_de_v, a: p_de_a },
+                p_nde: { h: p_nde_h, v: p_nde_v, a: p_nde_a }
+              },
+              axes: {
+                motor: { h: Math.max(m_de_h, m_nde_h), v: Math.max(m_de_v, m_nde_v), a: Math.max(m_de_a, m_nde_a) },
+                pump:  { h: Math.max(p_de_h, p_nde_h), v: Math.max(p_de_v, p_nde_v), a: Math.max(p_de_a, p_nde_a) }
+              },
+              history: historyObj,
+              summary: summary,
+              action: action,
+              detailNotes: `표준 양식 엑셀 업로드`
+            });
+            addedCount++;
           }
 
           if (addedCount === 0) {
             statusBox.className = 'p-3 rounded-lg border text-xs bg-amber-950/20 border-amber-500/40 text-amber-400';
-            statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>시트에서 유효한 설비명 데이터를 찾지 못했습니다. 엑셀 양식을 확인해주세요.`;
+            statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>등록할 데이터가 없습니다. 빈 양식인지 확인해 주세요.`;
             return;
           }
 
+          currentPeriod = targetPeriod;
           saveToLocalStorage();
           renderPeriodSelectors();
 
-          // 최신 파싱된 시트의 주기로 뷰어 즉시 자동 변경
-          if(parsedSheets.length > 0) {
-             let lastPeriod = equipmentData[0].period;
-             if (currentPeriod !== lastPeriod) {
-                 switchPeriod(lastPeriod);
-             }
-          }
-
           statusBox.className = 'p-3 rounded-lg border text-xs bg-emerald-950/20 border-emerald-500/40 text-emerald-400 font-medium';
-          statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>[<strong>${parsedSheets.join(', ')}</strong>] 시트에서 총 <strong>${addedCount}건</strong>이 완벽하게 자동 분리 추출되었습니다!`;
+          statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>표준 양식에서 총 <strong>${addedCount}건</strong>이 완벽하게 등록되었습니다!`;
 
           updateDashboard();
-          setTimeout(() => { closeUploadModal(); }, 3000);
+          setTimeout(() => { closeUploadModal(); }, 1500);
 
         } catch (err) {
           console.error(err);
           statusBox.className = 'p-3 rounded-lg border text-xs bg-red-950/20 border-red-500/40 text-red-400';
-          statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>시트 파싱 실패: 파일 서식을 확인해 주세요.`;
+          statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>양식 파싱 실패: 다운로드 받은 표준 양식을 그대로 사용해 주세요.`;
         }
       };
 
