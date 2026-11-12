@@ -110,6 +110,11 @@ dashboard_html = r"""<!DOCTYPE html>
 
       <!-- Right Header Actions -->
       <div class="flex items-center gap-2 sm:gap-3 w-full sm:w-auto justify-end flex-wrap">
+        <!-- Repair & AI Summary Sheet Button -->
+        <button onclick="openRepairSummaryModal()" class="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs sm:text-sm font-bold py-2 px-3 rounded-lg transition duration-200 shadow">
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          <span>수선/AI 요약시트</span>
+        </button>
         <!-- Google Sheets Sync Button -->
         <button onclick="openSheetModal()" class="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs sm:text-sm font-medium py-2 px-3 rounded-lg transition duration-200 shadow">
           <i class="fa-solid fa-table-cells text-emerald-200"></i>
@@ -398,8 +403,8 @@ dashboard_html = r"""<!DOCTYPE html>
               <th class="py-3 px-3 text-center">펌프 Max</th>
               <th class="py-3 px-3 text-center cursor-pointer hover:text-white" onclick="toggleSort('maxRms')">최대 RMS <i class="fa-solid fa-sort ml-1 opacity-50"></i></th>
               <th class="py-3 px-3 text-center cursor-pointer hover:text-white" onclick="toggleSort('grade')">종합평가 <i class="fa-solid fa-sort ml-1 opacity-50"></i></th>
-              <th class="py-3 px-4">현장 진단 요약 및 이상 부위</th>
-              <th class="py-3 px-4">후속 정비대책</th>
+              <th class="py-3 px-4">🤖 AI 결함 추정 및 개선 권고</th>
+              <th class="py-3 px-4">현장 진단 요약 및 정비대책</th>
               <th class="py-3 px-3 text-center">관리</th>
             </tr>
           </thead>
@@ -410,6 +415,91 @@ dashboard_html = r"""<!DOCTYPE html>
       </div>
     </section>
   </main>
+
+  <!-- MODAL 8: Repair & AI Improvement Summary Sheet Modal -->
+  <div id="repairSummaryModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-5xl rounded-2xl shadow-2xl p-6 relative max-h-[92vh] overflow-y-auto custom-scrollbar">
+      <button onclick="closeRepairSummaryModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white transition">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 border-b border-slate-700 pb-4">
+        <div class="flex items-center gap-3">
+          <div class="h-10 w-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center text-lg">
+            <i class="fa-solid fa-screwdriver-wrench"></i>
+          </div>
+          <div>
+            <h3 class="text-base sm:text-lg font-bold text-white">반기별 설비 수선/개선 성과 및 AI 정밀진단 요약시트</h3>
+            <p class="text-xs text-slate-400">상반기 ↔ 하반기 진동 변화를 비교하여 수선 완료(개선) 설비와 AI 결함 추정 결과를 요약합니다.</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="exportRepairSummaryExcel()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition flex items-center gap-1.5 shadow">
+            <i class="fa-solid fa-file-excel"></i>
+            <span>요약시트 엑셀 다운로드</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Period Comparison Selector -->
+      <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-800/80 p-3 rounded-xl border border-slate-700 mb-4 text-xs">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-slate-300 font-semibold"><i class="fa-solid fa-code-compare text-cyan-400 mr-1"></i>비교 기준 시기:</span>
+          <select id="sumBasePeriod" onchange="renderRepairSummarySheet()" class="bg-slate-900 border border-slate-600 text-slate-200 font-bold rounded px-2.5 py-1.5"></select>
+          <i class="fa-solid fa-arrow-right text-slate-400 mx-1"></i>
+          <select id="sumTargetPeriod" onchange="renderRepairSummarySheet()" class="bg-slate-900 border border-cyan-500 text-cyan-300 font-bold rounded px-2.5 py-1.5"></select>
+        </div>
+
+        <div class="flex items-center gap-1.5">
+          <button onclick="setRepairFilter('ALL')" id="btnRepAll" class="px-2.5 py-1 rounded font-bold bg-cyan-600 text-white transition">전체 비교</button>
+          <button onclick="setRepairFilter('IMPROVED')" id="btnRepImproved" class="px-2.5 py-1 rounded font-medium bg-slate-900 text-emerald-400 border border-emerald-700/50 hover:bg-emerald-950 transition">🛠️ 수선/개선 완료 설비만</button>
+          <button onclick="setRepairFilter('NEED_REPAIR')" id="btnRepNeed" class="px-2.5 py-1 rounded font-medium bg-slate-900 text-rose-400 border border-rose-700/50 hover:bg-rose-950 transition">🚨 개선 필요(C·D) 설비만</button>
+        </div>
+      </div>
+
+      <!-- Summary KPI Cards -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-xs">
+        <div class="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/30">
+          <span class="text-emerald-400 font-semibold block">🛠️ 수선/개선 완료 (진동 감소)</span>
+          <span id="sumKpiImproved" class="text-2xl font-black text-emerald-400 mt-1 block">0 대</span>
+          <span class="text-[11px] text-emerald-300/70">C·D → A·B 등급 안정화 포함</span>
+        </div>
+        <div class="p-3 rounded-xl bg-cyan-950/20 border border-cyan-500/30">
+          <span class="text-cyan-400 font-semibold block">📉 평균 진동 저감률 (수선설비)</span>
+          <span id="sumKpiReduction" class="text-2xl font-black text-cyan-300 mt-1 block">0 %</span>
+          <span class="text-[11px] text-cyan-300/70">정비 전후 최대 RMS 비교</span>
+        </div>
+        <div class="p-3 rounded-xl bg-rose-950/20 border border-rose-500/30">
+          <span class="text-rose-400 font-semibold block">🚨 현재 개선 필요 (C·D등급)</span>
+          <span id="sumKpiNeed" class="text-2xl font-black text-rose-400 mt-1 block">0 대</span>
+          <span class="text-[11px] text-rose-300/70">AI 원인진단 및 정비 권고 대상</span>
+        </div>
+        <div class="p-3 rounded-xl bg-slate-800/80 border border-slate-700">
+          <span class="text-slate-300 font-semibold block">⏸️ 가동정지 / 정비대기 변화</span>
+          <span id="sumKpiStopped" class="text-2xl font-black text-slate-200 mt-1 block">0 대</span>
+          <span class="text-[11px] text-slate-400">비교 시점 미가동 대수</span>
+        </div>
+      </div>
+
+      <!-- Summary Comparison Table -->
+      <div class="overflow-x-auto custom-scrollbar border border-slate-700 rounded-xl">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr class="bg-slate-800 text-slate-300 border-b border-slate-700 text-[11px]">
+              <th class="py-2.5 px-3">사업소</th>
+              <th class="py-2.5 px-3">설비명 (용량)</th>
+              <th class="py-2.5 px-3 text-center">이전 반기 (RMS/등급)</th>
+              <th class="py-2.5 px-3 text-center">현재 반기 (RMS/등급)</th>
+              <th class="py-2.5 px-3 text-center">수선/증감 결과</th>
+              <th class="py-2.5 px-3">🤖 AI 진단 추정 부위 및 개선 권고</th>
+            </tr>
+          </thead>
+          <tbody id="repairSummaryTableBody" class="divide-y divide-slate-800 text-slate-300">
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
   <!-- MODAL: Edit Equipment Modal -->
   <div id="editModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
@@ -1548,6 +1638,280 @@ dashboard_html = r"""<!DOCTYPE html>
       return { group, grade, foundation };
     }
 
+    // 12축 계측 데이터 기반 AI 결함 부위 및 개선 대책 자동 추론 엔진
+    function diagnoseByAI(item) {
+      const maxRms = parseFloat(item.maxRms) || 0;
+      if (maxRms === 0) {
+        return {
+          status: 'STOP',
+          part: '가동정지 / 미가동',
+          cause: item.summary && item.summary !== '측정 완료' ? item.summary : '운전 휴지 또는 정비 대기 상태',
+          recommendation: '차기 가동 전 절연저항 측정 및 수동 회전 간섭 여부 점검'
+        };
+      }
+
+      const p = item.points || {
+        m_de: { h: maxRms, v: 0, a: 0 }, m_nde: { h: 0, v: 0, a: 0 },
+        p_de: { h: maxRms, v: 0, a: 0 }, p_nde: { h: 0, v: 0, a: 0 }
+      };
+
+      const candidates = [
+        { key: 'm_de', label: '전동기 부하측(M-DE)', h: p.m_de.h || 0, v: p.m_de.v || 0, a: p.m_de.a || 0, max: Math.max(p.m_de.h||0, p.m_de.v||0, p.m_de.a||0) },
+        { key: 'm_nde', label: '전동기 반부하측(M-NDE)', h: p.m_nde.h || 0, v: p.m_nde.v || 0, a: p.m_nde.a || 0, max: Math.max(p.m_nde.h||0, p.m_nde.v||0, p.m_nde.a||0) },
+        { key: 'p_de', label: '펌프/팬 부하측(P-DE)', h: p.p_de.h || 0, v: p.p_de.v || 0, a: p.p_de.a || 0, max: Math.max(p.p_de.h||0, p.p_de.v||0, p.p_de.a||0) },
+        { key: 'p_nde', label: '펌프/팬 반부하측(P-NDE)', h: p.p_nde.h || 0, v: p.p_nde.v || 0, a: p.p_nde.a || 0, max: Math.max(p.p_nde.h||0, p.p_nde.v||0, p.p_nde.a||0) }
+      ];
+
+      candidates.sort((a, b) => b.max - a.max);
+      const worst = candidates[0];
+
+      // 정상(A, B) 등급일 때
+      if (item.overallGrade === 'A' || item.overallGrade === 'B') {
+        if (maxRms >= 2.2) {
+          return {
+            status: 'NORMAL_WATCH',
+            part: `${worst.label}`,
+            cause: `정상 범위 내 상한 근접 (${worst.max.toFixed(2)} mm/s)`,
+            recommendation: `주기적 구리스 급유 및 ${worst.label} 추세 모니터링 유지`
+          };
+        }
+        return {
+          status: 'GOOD',
+          part: '전 부위 양호',
+          cause: '특이 진동 및 결함 징후 없음',
+          recommendation: '현재 상태 양호 (정기 점검 주기 유지)'
+        };
+      }
+
+      // C 또는 D 등급: 방향별(X/Y/Z) 우세성 및 모터-펌프 상관관계 분석
+      let dominantAxis = '수평(X)';
+      let causeText = '';
+      let recText = '';
+
+      const mDeMax = Math.max(p.m_de.h||0, p.m_de.v||0, p.m_de.a||0);
+      const pDeMax = Math.max(p.p_de.h||0, p.p_de.v||0, p.p_de.a||0);
+
+      if (worst.a > 0 && worst.a >= worst.h * 0.85 && worst.a >= worst.v * 0.85) {
+        dominantAxis = '축방향(Z)';
+        causeText = `${worst.label} 축방향 진동 과다 → 커플링 축정렬 불량(Misalignment) 또는 축 휘어짐 추정`;
+        recText = '모터-펌프 레이저 축정렬(Alignment) 재교정 및 커플링 스페이서/엘레먼트 점검 요망';
+      } else if (mDeMax >= 2.8 && pDeMax >= 2.8 && Math.abs(mDeMax - pDeMax) <= 1.8) {
+        dominantAxis = '양측 부하단 동반 상승';
+        causeText = `전동기(M-DE)와 펌프(P-DE) 부하측 동시 진동 과다 → 커플링 마모·정렬불량 또는 배관 응력 추정`;
+        recText = '커플링 연결부 유격 점검, 축정렬 교정 및 양측 부하단 베어링 동시 점검 필요';
+      } else if (worst.v > worst.h * 1.12) {
+        dominantAxis = '수직(Y)';
+        causeText = `${worst.label} 수직방향(${worst.v.toFixed(2)}) 우세 → 기초 앵커볼트 풀림, 베이스 이완(Looseness) 또는 소프트풋 추정`;
+        recText = `${worst.label} 하부 기초 볼트 체결상태 확인, 베이스 프레임 보강 및 베어링 하우징 유격 점검`;
+      } else {
+        dominantAxis = '수평(X)';
+        if (worst.key.startsWith('p_')) {
+          causeText = `${worst.label} 수평방향(${worst.h.toFixed(2)}) 과다 → 회전체(임펠러/팬) 불평형(Unbalance) 또는 베어링 마모 추정`;
+          recText = `${worst.label} 베어링 교체 검토 및 임펠러 이물질 제거·현장 밸런싱(Balancing) 개선 필요`;
+        } else {
+          causeText = `${worst.label} 수평방향(${worst.h.toFixed(2)}) 과다 → 전동기 베어링 마모 또는 회전자 불평형 추정`;
+          recText = `${worst.label} 베어링 분해교체 및 전동기 축정렬 상태 개선 필요`;
+        }
+      }
+
+      if (item.summary && item.summary.includes('공진')) {
+        causeText = `${worst.label} 운전 조건 공진(Resonance) 및 유체 와류 진동`;
+        recText = '운전 댐퍼 개도율/회전수 조정 또는 프레임 보강대 설치를 통한 고유진동수 회피 필요';
+      }
+
+      return {
+        status: item.overallGrade === 'D' ? 'DANGER' : 'WARNING',
+        part: `${worst.label} [${dominantAxis}]`,
+        cause: causeText,
+        recommendation: recText
+      };
+    }
+
+    let currentRepairFilter = 'ALL';
+
+    function openRepairSummaryModal() {
+      const baseSel = document.getElementById('sumBasePeriod');
+      const targetSel = document.getElementById('sumTargetPeriod');
+
+      if (periodList.length > 0) {
+        const baseDefault = periodList[0];
+        const targetDefault = periodList.length > 1 ? periodList[periodList.length - 1] : periodList[0];
+
+        baseSel.innerHTML = periodList.map(p => `<option value="${p}" ${p === baseDefault ? 'selected' : ''}>${p}</option>`).join('');
+        targetSel.innerHTML = periodList.map(p => `<option value="${p}" ${p === targetDefault ? 'selected' : ''}>${p}</option>`).join('');
+      }
+
+      document.getElementById('repairSummaryModal').classList.remove('hidden');
+      renderRepairSummarySheet();
+    }
+
+    function closeRepairSummaryModal() {
+      document.getElementById('repairSummaryModal').classList.add('hidden');
+    }
+
+    function setRepairFilter(mode) {
+      currentRepairFilter = mode;
+      document.getElementById('btnRepAll').className = mode === 'ALL'
+        ? 'px-2.5 py-1 rounded font-bold bg-cyan-600 text-white transition'
+        : 'px-2.5 py-1 rounded font-medium bg-slate-900 text-slate-300 border border-slate-700 hover:text-white transition';
+      document.getElementById('btnRepImproved').className = mode === 'IMPROVED'
+        ? 'px-2.5 py-1 rounded font-bold bg-emerald-600 text-white transition'
+        : 'px-2.5 py-1 rounded font-medium bg-slate-900 text-emerald-400 border border-emerald-700/50 hover:bg-emerald-950 transition';
+      document.getElementById('btnRepNeed').className = mode === 'NEED_REPAIR'
+        ? 'px-2.5 py-1 rounded font-bold bg-rose-600 text-white transition'
+        : 'px-2.5 py-1 rounded font-medium bg-slate-900 text-rose-400 border border-rose-700/50 hover:bg-rose-950 transition';
+
+      renderRepairSummarySheet();
+    }
+
+    function buildRepairComparisonRows() {
+      const baseP = document.getElementById('sumBasePeriod')?.value || periodList[0];
+      const targetP = document.getElementById('sumTargetPeriod')?.value || periodList[periodList.length - 1];
+
+      const map = {};
+      equipmentData.forEach(item => {
+        if (currentOffice !== 'ALL' && item.office !== currentOffice) return;
+        const key = `${item.office}||${item.name}`;
+        if (!map[key]) {
+          map[key] = { office: item.office, name: item.name, power: item.power, base: null, target: null };
+        }
+        if (item.period === baseP) map[key].base = item;
+        if (item.period === targetP) map[key].target = item;
+      });
+
+      const list = Object.values(map).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+      const gradeRank = { 'A': 1, 'B': 2, 'C': 3, 'D': 4 };
+
+      return list.map(entry => {
+        const b = entry.base;
+        const t = entry.target;
+        const bRms = b ? (parseFloat(b.maxRms) || 0) : null;
+        const tRms = t ? (parseFloat(t.maxRms) || 0) : null;
+        const bGrade = b ? (bRms === 0 ? 'STOP' : b.overallGrade) : '-';
+        const tGrade = t ? (tRms === 0 ? 'STOP' : t.overallGrade) : '-';
+
+        let changeType = 'SAME';
+        let diffRms = 0;
+        let diffPct = 0;
+
+        if (bRms !== null && tRms !== null && bRms > 0 && tRms > 0) {
+          diffRms = tRms - bRms;
+          diffPct = Math.round(((bRms - tRms) / bRms) * 100);
+          if ((gradeRank[bGrade] >= 3 && gradeRank[tGrade] <= 2) || diffRms <= -0.5) {
+            changeType = 'IMPROVED';
+          } else if (gradeRank[tGrade] >= 3 || diffRms >= 0.8) {
+            changeType = 'NEED_REPAIR';
+          }
+        } else if (bGrade === 'STOP' && tRms > 0 && gradeRank[tGrade] <= 2) {
+          changeType = 'IMPROVED';
+        } else if (t && (t.overallGrade === 'C' || t.overallGrade === 'D') && tRms > 0) {
+          changeType = 'NEED_REPAIR';
+        }
+
+        const aiDiag = t ? diagnoseByAI(t) : (b ? diagnoseByAI(b) : { part: '-', cause: '-', recommendation: '-' });
+
+        return {
+          ...entry,
+          bRms, tRms, bGrade, tGrade,
+          changeType, diffRms, diffPct,
+          aiDiag
+        };
+      });
+    }
+
+    function renderRepairSummarySheet() {
+      const rows = buildRepairComparisonRows();
+      const improvedRows = rows.filter(r => r.changeType === 'IMPROVED');
+      const needRows = rows.filter(r => r.tGrade === 'C' || r.tGrade === 'D');
+      const stopRows = rows.filter(r => r.tGrade === 'STOP');
+
+      const avgRed = improvedRows.filter(r => r.diffPct > 0).length > 0
+        ? Math.round(improvedRows.filter(r => r.diffPct > 0).reduce((acc, cur) => acc + cur.diffPct, 0) / improvedRows.filter(r => r.diffPct > 0).length)
+        : 0;
+
+      document.getElementById('sumKpiImproved').innerText = `${improvedRows.length} 대`;
+      document.getElementById('sumKpiReduction').innerText = `${avgRed} % 감소`;
+      document.getElementById('sumKpiNeed').innerText = `${needRows.length} 대`;
+      document.getElementById('sumKpiStopped').innerText = `${stopRows.length} 대`;
+
+      let displayRows = rows;
+      if (currentRepairFilter === 'IMPROVED') displayRows = improvedRows;
+      else if (currentRepairFilter === 'NEED_REPAIR') displayRows = needRows;
+
+      const tbody = document.getElementById('repairSummaryTableBody');
+      if (displayRows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-slate-500">해당 조건의 비교 설비가 없습니다.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = displayRows.map(r => {
+        const bText = r.bRms === null ? '<span class="text-slate-500">데이터없음</span>' :
+                      (r.bRms === 0 ? '<span class="text-slate-400">가동정지</span>' : `<span class="font-mono font-bold">${r.bRms.toFixed(2)}</span> <span class="px-1.5 py-0.5 rounded text-[10px] grade-badge-${r.bGrade}">${r.bGrade}</span>`);
+        const tText = r.tRms === null ? '<span class="text-slate-500">데이터없음</span>' :
+                      (r.tRms === 0 ? '<span class="text-slate-400">가동정지</span>' : `<span class="font-mono font-bold">${r.tRms.toFixed(2)}</span> <span class="px-1.5 py-0.5 rounded text-[10px] grade-badge-${r.tGrade}">${r.tGrade}</span>`);
+
+        let statusBadge = '<span class="text-slate-400">유지 (양호)</span>';
+        if (r.changeType === 'IMPROVED') {
+          statusBadge = `<span class="px-2 py-1 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-600/50 font-bold text-[11px]">🛠️ 수선완료 (${r.diffPct > 0 ? '-' + r.diffPct + '%' : '정상화가동'})</span>`;
+        } else if (r.tGrade === 'D') {
+          statusBadge = `<span class="px-2 py-1 rounded bg-rose-950/60 text-rose-300 border border-rose-600/50 font-bold text-[11px]">🚨 즉시정비 요망</span>`;
+        } else if (r.tGrade === 'C') {
+          statusBadge = `<span class="px-2 py-1 rounded bg-amber-950/60 text-amber-300 border border-amber-600/50 font-bold text-[11px]">⚠️ 보수필요 (${r.diffRms > 0 ? '+' + r.diffRms.toFixed(1) : '주의'})</span>`;
+        }
+
+        return `
+          <tr class="hover:bg-slate-800/60 transition">
+            <td class="py-2.5 px-3 text-slate-300 font-medium">${r.office}</td>
+            <td class="py-2.5 px-3 font-bold text-white">${r.name} <span class="text-[10px] font-mono text-cyan-400 ml-1">${r.power}kW</span></td>
+            <td class="py-2.5 px-3 text-center">${bText}</td>
+            <td class="py-2.5 px-3 text-center">${tText}</td>
+            <td class="py-2.5 px-3 text-center">${statusBadge}</td>
+            <td class="py-2.5 px-3">
+              <div class="text-[11px] font-semibold text-cyan-300">${r.aiDiag.part} : ${r.aiDiag.cause}</div>
+              <div class="text-[11px] text-amber-300/90 mt-0.5"><i class="fa-solid fa-lightbulb mr-1"></i>${r.aiDiag.recommendation}</div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function exportRepairSummaryExcel() {
+      const baseP = document.getElementById('sumBasePeriod')?.value || periodList[0];
+      const targetP = document.getElementById('sumTargetPeriod')?.value || periodList[periodList.length - 1];
+      const rows = buildRepairComparisonRows();
+
+      const sheetData = [
+        ["사업소", "설비명", "정격용량(kW)", `${baseP} 최대RMS`, `${baseP} 등급`, `${targetP} 최대RMS`, `${targetP} 등급`, "수선/개선 판정", "진동저감률(%)", "AI 진단 추정 원인", "AI 개선 권고사항"]
+      ];
+
+      rows.forEach(r => {
+        let statusLabel = "정상유지";
+        if (r.changeType === 'IMPROVED') statusLabel = "수선/개선완료";
+        else if (r.tGrade === 'D') statusLabel = "즉시정비요망(D)";
+        else if (r.tGrade === 'C') statusLabel = "보수필요(C)";
+        else if (r.tGrade === 'STOP') statusLabel = "가동정지";
+
+        sheetData.push([
+          r.office,
+          r.name,
+          r.power,
+          r.bRms !== null ? r.bRms : '-',
+          r.bGrade,
+          r.tRms !== null ? r.tRms : '-',
+          r.tGrade,
+          statusLabel,
+          r.diffPct ? `${r.diffPct}%` : '-',
+          `${r.aiDiag.part} - ${r.aiDiag.cause}`,
+          r.aiDiag.recommendation
+        ]);
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(sheetData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "수선및AI진단요약");
+      XLSX.writeFile(wb, `설비수선_및_AI진단요약시트_${baseP}_${targetP}.xlsx`);
+    }
+
     function switchOffice(officeName) {
       currentOffice = officeName;
 
@@ -1926,6 +2290,8 @@ dashboard_html = r"""<!DOCTYPE html>
           motorMax = item.maxRms; pumpMax = item.maxRms;
         }
 
+        const aiInfo = diagnoseByAI(item);
+
         return `
           <tr class="hover:bg-slate-800/50 transition">
             <td class="py-3 px-3">
@@ -1949,11 +2315,17 @@ dashboard_html = r"""<!DOCTYPE html>
                 ${item.maxRms === 0 ? '미가동' : badgeLabel}
               </span>
             </td>
-            <td class="py-3 px-4 text-slate-300 max-w-xs truncate" title="${item.summary}">
-              ${item.summary}
+            <td class="py-3 px-4 max-w-xs">
+              <div class="text-[11px] font-bold ${item.overallGrade === 'D' ? 'text-rose-300' : (item.overallGrade === 'C' ? 'text-amber-300' : 'text-cyan-300')} truncate" title="${aiInfo.part} - ${aiInfo.cause}">
+                <i class="fa-solid fa-robot mr-1"></i>${aiInfo.part}
+              </div>
+              <div class="text-[10px] text-slate-400 truncate mt-0.5" title="${aiInfo.recommendation}">
+                ${aiInfo.recommendation}
+              </div>
             </td>
-            <td class="py-3 px-4 text-slate-400 max-w-xs truncate" title="${item.action}">
-              <span class="${item.overallGrade === 'D' ? 'text-red-400 font-medium' : ''}">${item.action}</span>
+            <td class="py-3 px-4 text-slate-300 max-w-xs truncate" title="${item.summary} / ${item.action}">
+              <div>${item.summary}</div>
+              <div class="text-[10px] ${item.overallGrade === 'D' ? 'text-red-400 font-semibold' : 'text-slate-400'}">${item.action}</div>
             </td>
             <td class="py-3 px-3 text-center">
               <div class="flex items-center justify-center gap-1">
@@ -2362,6 +2734,8 @@ dashboard_html = r"""<!DOCTYPE html>
         p_nde: { h: (item.axes?.pump.h || item.maxRms)*0.6, v: 0, a: 0 }
       };
 
+      const aiDiag = diagnoseByAI(item);
+
       detailContainer.innerHTML = `
         <div class="flex items-center justify-between pb-3 border-b border-slate-700">
           <div>
@@ -2374,7 +2748,17 @@ dashboard_html = r"""<!DOCTYPE html>
           <span class="px-3 py-1 rounded text-xs font-black ${badgeClass}">${badgeLabel}</span>
         </div>
 
-        <div class="mt-4 p-3 bg-slate-800/80 rounded-xl border border-slate-700">
+        <!-- AI 정밀 진단 카드 -->
+        <div class="mt-4 p-3.5 bg-gradient-to-r from-cyan-950/50 to-slate-900 rounded-xl border border-cyan-500/40">
+          <div class="flex items-center gap-2 text-xs font-bold text-cyan-300 mb-1.5">
+            <i class="fa-solid fa-robot text-sm"></i>
+            <span>AI 12축 패턴 정밀 진단 및 개선 가이드</span>
+          </div>
+          <p class="text-xs text-slate-200 font-semibold mb-1">• 집중 이상 부위 및 추정 원인: <span class="text-amber-300">${aiDiag.part} — ${aiDiag.cause}</span></p>
+          <p class="text-xs text-emerald-300 font-medium">• AI 추천 정비 대책: ${aiDiag.recommendation}</p>
+        </div>
+
+        <div class="mt-3 p-3 bg-slate-800/80 rounded-xl border border-slate-700">
           <span class="text-xs font-bold text-slate-200 block mb-2"><i class="fa-solid fa-crosshairs text-cyan-400 mr-1.5"></i>4개 지점(DE/NDE) 12축 실측 RMS (mm/s)</span>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
             <div class="bg-slate-900/80 p-2 rounded border border-slate-700">
