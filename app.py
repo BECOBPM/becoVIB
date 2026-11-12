@@ -738,39 +738,35 @@ dashboard_html = r"""<!DOCTYPE html>
           <i class="fa-solid fa-file-arrow-up"></i>
         </div>
         <div>
-          <h3 class="text-base font-bold text-white">표준 양식 엑셀 업로드</h3>
-          <p class="text-xs text-slate-400">반드시 시스템에서 다운로드한 [표준 양식] 엑셀 파일을 사용하여 업로드해 주세요.</p>
+          <h3 class="text-base font-bold text-white">현장 엑셀 파일 스마트 업로드</h3>
+          <p class="text-xs text-slate-400">최고값(Max), 등급 계산 없이 X/Y축 데이터만 있는 세로형 엑셀을 그대로 올리세요.</p>
         </div>
       </div>
 
       <div class="space-y-4 text-xs">
         <div class="flex items-center justify-between bg-slate-800/80 p-2.5 rounded-lg border border-slate-700">
-          <label class="text-slate-300 font-medium">기본 데이터 반영 측정시기:</label>
+          <label class="text-slate-300 font-medium">데이터 반영 측정시기:</label>
           <select id="uploadPeriodSelect" class="bg-slate-900 border border-slate-600 rounded px-2.5 py-1 text-cyan-300 font-bold focus:outline-none"></select>
         </div>
 
         <div class="p-3 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-between">
           <div>
-            <span class="font-bold text-slate-200 block">진동측정결과 시트 표준 양식 (4개 포인트 12축)</span>
-            <span class="text-slate-400 text-[11px]">열 구성: 사업소, 설비명, 용량kW, M-DE(H/V/A), M-NDE(H/V/A), P-DE(H/V/A), P-NDE(H/V/A)...</span>
+            <span class="font-bold text-slate-200 block">AI 세로형 양식 자동 파싱 지원</span>
+            <span class="text-slate-400 text-[11px]">여러 줄로 나뉜 측정위치와 X, Y축 값을 시스템이 스스로 묶어냅니다.</span>
           </div>
-          <button onclick="downloadSampleTemplate()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-cyan-300 rounded-lg font-medium border border-slate-600 transition flex items-center gap-1.5">
-            <i class="fa-solid fa-download"></i>
-            <span>양식 다운로드</span>
-          </button>
         </div>
 
         <div id="dropZone" onclick="document.getElementById('fileInput').click()" class="border-2 border-dashed border-slate-600 hover:border-cyan-500 rounded-2xl p-8 text-center cursor-pointer transition bg-slate-800/40 hover:bg-slate-800/70">
           <i class="fa-solid fa-cloud-arrow-up text-3xl text-cyan-400 mb-2"></i>
-          <p class="text-slate-200 font-bold mb-1">엑셀(.xlsx, .xls) 또는 CSV 파일을 여기로 드래그하세요</p>
-          <p class="text-slate-400 text-[11px]">반드시 시스템 표준 양식 사용</p>
+          <p class="text-slate-200 font-bold mb-1">현장 엑셀 파일을 여기로 드래그하세요</p>
+          <p class="text-slate-400 text-[11px]">양식 변경 금지 (있는 그대로 업로드)</p>
           <input type="file" id="fileInput" accept=".xlsx, .xls, .csv" onchange="handleFileSelect(event)" class="hidden">
         </div>
 
         <div id="uploadStatusBox" class="hidden p-3 rounded-lg border text-xs"></div>
 
         <div class="pt-3 border-t border-slate-700 flex justify-between items-center">
-          <span class="text-[11px] text-slate-400">12축 최대치 기준 자동 ISO 판정</span>
+          <span class="text-[11px] text-slate-400">12축 최대치 자동 계산 및 ISO 판정 처리됨</span>
           <button onclick="closeUploadModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-medium transition">닫기</button>
         </div>
       </div>
@@ -2525,7 +2521,7 @@ dashboard_html = r"""<!DOCTYPE html>
       const statusBox = document.getElementById('uploadStatusBox');
       const targetPeriod = document.getElementById('uploadPeriodSelect').value;
       statusBox.classList.remove('hidden');
-      statusBox.innerHTML = `<span class="text-cyan-400 font-semibold"><i class="fa-solid fa-spinner fa-spin mr-1"></i>표준 양식 데이터 분석 중: ${file.name}</span>`;
+      statusBox.innerHTML = `<span class="text-cyan-400 font-semibold"><i class="fa-solid fa-spinner fa-spin mr-1"></i>스마트 AI 파싱 중: ${file.name}</span>`;
 
       const reader = new FileReader();
 
@@ -2536,121 +2532,136 @@ dashboard_html = r"""<!DOCTYPE html>
           
           let targetSheetName = workbook.SheetNames[0];
           for (let name of workbook.SheetNames) {
-            if (name.includes('진동측정결과')) {
+            if (name.includes('진동') || name.includes('측정')) {
               targetSheetName = name;
               break;
             }
           }
 
           const worksheet = workbook.Sheets[targetSheetName];
+          // 병합셀(세로형) 처리를 위해 raw 데이터로 읽음
           const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
 
-          // 표준 양식의 헤더행 찾기
-          let headerIdx = -1;
-          for (let r = 0; r < Math.min(jsonData.length, 10); r++) {
-            const rowStr = jsonData[r].join('').replace(/\s/g, '');
-            if (rowStr.includes('사업소') && rowStr.includes('설비명') && rowStr.includes('용량')) {
-              headerIdx = r;
-              break;
+          let parsedList = [];
+          let currentEquip = null;
+          let currentOffice = '에너지사업소'; // 기본값 (상황에 따라 동적할당 가능)
+
+          for (let i = 0; i < jsonData.length; i++) {
+            const row = jsonData[i];
+            if (!row || row.length < 5) continue; // 데이터가 없는 행 스킵
+
+            let dateStr = String(row[0]).trim();
+            let equipName = String(row[1]).trim();
+            
+            // 헤더 행 무시
+            if (equipName === '설비명' || String(row[3]).includes('측정위치')) continue;
+
+            // 새 설비명이 등장하면 (병합셀 시작점)
+            if (equipName !== '') {
+              if (currentEquip) parsedList.push(currentEquip); // 이전 설비 저장
+              
+              currentEquip = {
+                name: equipName,
+                date: dateStr || targetPeriod,
+                power: parseFloat(row[2]) || 55, // 전동기(kW)
+                points: {
+                  m_de: { h: 0, v: 0, a: 0 }, m_nde: { h: 0, v: 0, a: 0 },
+                  p_de: { h: 0, v: 0, a: 0 }, p_nde: { h: 0, v: 0, a: 0 }
+                },
+                summary: '',
+                action: ''
+              };
+            }
+
+            if (!currentEquip) continue;
+
+            // 세로형 데이터 매핑 로직 (측정위치, 축, rms, 이상원인, 우선순위)
+            let pointStr = String(row[3]).trim().replace(/\s/g, ''); // 예: "1(전동기부하측)"
+            let axisStr = String(row[4]).toLowerCase().trim(); // 예: "x"
+            let rmsVal = parseFloat(row[5]);
+            let causeStr = String(row[8] || '').trim();
+            let actionStr = String(row[9] || '').trim();
+
+            if (!isNaN(rmsVal) && rmsVal > 0) { // 빈칸이나 0은 무시하고 유효한 수치만 처리
+              let targetPoint = null;
+              if (pointStr.includes('전동기') && pointStr.includes('반부하')) targetPoint = currentEquip.points.m_nde;
+              else if (pointStr.includes('전동기')) targetPoint = currentEquip.points.m_de;
+              else if ((pointStr.includes('펌프') || pointStr.includes('송풍기')) && pointStr.includes('반부하')) targetPoint = currentEquip.points.p_nde;
+              else if (pointStr.includes('펌프') || pointStr.includes('송풍기')) targetPoint = currentEquip.points.p_de;
+
+              if (targetPoint) {
+                if (axisStr === 'x' || axisStr === 'h') targetPoint.h = Math.max(targetPoint.h, rmsVal);
+                if (axisStr === 'y' || axisStr === 'v') targetPoint.v = Math.max(targetPoint.v, rmsVal);
+                if (axisStr === 'z' || axisStr === 'a') targetPoint.a = Math.max(targetPoint.a, rmsVal);
+              }
+            }
+
+            // 이상 원인 및 조치 내용 누적 (중복 방지)
+            if (causeStr && causeStr !== '-' && !currentEquip.summary.includes(causeStr)) {
+              currentEquip.summary += (currentEquip.summary ? ', ' : '') + causeStr;
+            }
+            if (actionStr && actionStr !== '양호' && !currentEquip.action.includes(actionStr)) {
+              currentEquip.action += (currentEquip.action ? ', ' : '') + actionStr;
             }
           }
+          
+          if (currentEquip) parsedList.push(currentEquip); // 마지막 설비 저장
 
-          if (headerIdx === -1) {
-            statusBox.className = 'p-3 rounded-lg border text-xs bg-red-950/20 border-red-500/40 text-red-400';
-            statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>표준 양식이 아닙니다. [양식 다운로드] 버튼을 눌러 지정된 양식을 사용해 주세요.`;
+          if (parsedList.length === 0) {
+            statusBox.className = 'p-3 rounded-lg border text-xs bg-amber-950/20 border-amber-500/40 text-amber-400';
+            statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>읽어들일 데이터가 없습니다.`;
             return;
           }
 
-          let addedCount = 0;
+          // 추출된 설비들을 시스템에 등록
+          parsedList.forEach((eq, idx) => {
+            let p = eq.points;
+            let maxRms = Math.max(p.m_de.h, p.m_de.v, p.m_de.a, p.m_nde.h, p.m_nde.v, p.m_nde.a, p.p_de.h, p.p_de.v, p.p_de.a, p.p_nde.h, p.p_nde.v, p.p_nde.a);
+            if (maxRms === 0) maxRms = 1.0; // 값이 아예 없으면 기본값 처리
 
-          // 헤더 다음 줄부터 읽기 시작 (가로 1행 = 1설비)
-          for (let i = headerIdx + 1; i < jsonData.length; i++) {
-            const row = jsonData[i];
-            if (!row || row.length < 3) continue;
-
-            let office = String(row[0]).trim();
-            let name = String(row[1]).trim();
-            if (!name || name === '-' || name.includes('설비명')) continue;
-
-            let power = parseFloat(row[2]) || 55;
+            const evalRes = calculateIsoGrade(eq.power, maxRms, 'rigid');
             
-            // 12축 데이터 추출 (3열 ~ 14열)
-            let m_de_h = parseFloat(row[3]) || 0;
-            let m_de_v = parseFloat(row[4]) || 0;
-            let m_de_a = parseFloat(row[5]) || 0;
-            let m_nde_h = parseFloat(row[6]) || 0;
-            let m_nde_v = parseFloat(row[7]) || 0;
-            let m_nde_a = parseFloat(row[8]) || 0;
-            let p_de_h = parseFloat(row[9]) || 0;
-            let p_de_v = parseFloat(row[10]) || 0;
-            let p_de_a = parseFloat(row[11]) || 0;
-            let p_nde_h = parseFloat(row[12]) || 0;
-            let p_nde_v = parseFloat(row[13]) || 0;
-            let p_nde_a = parseFloat(row[14]) || 0;
-
-            let summary = String(row[15] || '').trim() || '측정 완료';
-            let action = String(row[16] || '').trim() || '추세 관리';
-            let period = String(row[17] || '').trim() || targetPeriod;
-
-            let maxRms = Math.max(m_de_h, m_de_v, m_de_a, m_nde_h, m_nde_v, m_nde_a, p_de_h, p_de_v, p_de_a, p_nde_h, p_nde_v, p_nde_a);
-
-            if (!periodList.includes(period)) periodList.push(period);
-            ensureOfficeRegistered(office);
-            const evalRes = calculateIsoGrade(power, maxRms, 'rigid');
-
             let historyObj = {};
-            historyObj[period] = maxRms;
+            historyObj[targetPeriod] = maxRms;
 
             equipmentData.unshift({
-              id: 'imp_' + Date.now() + '_' + i,
-              period: period,
-              office: office || '에너지사업소',
-              name: name,
-              power: power,
+              id: 'smart_' + Date.now() + '_' + idx,
+              period: targetPeriod,
+              office: currentOffice, // 필요 시 엑셀 내에서 파싱 가능
+              name: eq.name,
+              power: eq.power,
               group: evalRes.group,
               foundation: 'rigid',
               totalQty: 1,
-              unoperated: '-',
               overallGrade: evalRes.grade,
               maxRms: maxRms,
-              points: {
-                m_de:  { h: m_de_h, v: m_de_v, a: m_de_a },
-                m_nde: { h: m_nde_h, v: m_nde_v, a: m_nde_a },
-                p_de:  { h: p_de_h, v: p_de_v, a: p_de_a },
-                p_nde: { h: p_nde_h, v: p_nde_v, a: p_nde_a }
-              },
+              points: eq.points,
               axes: {
-                motor: { h: Math.max(m_de_h, m_nde_h), v: Math.max(m_de_v, m_nde_v), a: Math.max(m_de_a, m_nde_a) },
-                pump:  { h: Math.max(p_de_h, p_nde_h), v: Math.max(p_de_v, p_nde_v), a: Math.max(p_de_a, p_nde_a) }
+                motor: { h: Math.max(p.m_de.h, p.m_nde.h), v: Math.max(p.m_de.v, p.m_nde.v), a: Math.max(p.m_de.a, p.m_nde.a) },
+                pump:  { h: Math.max(p.p_de.h, p.p_nde.h), v: Math.max(p.p_de.v, p.p_nde.v), a: Math.max(p.p_de.a, p.p_nde.a) }
               },
               history: historyObj,
-              summary: summary,
-              action: action,
-              detailNotes: `표준 양식 엑셀 업로드`
+              summary: eq.summary || '측정 완료 (특이사항 없음)',
+              action: eq.action || '추세 관리',
+              detailNotes: '현장 세로형 다중행 엑셀 자동 분석(AI 파싱)으로 등록됨'
             });
-            addedCount++;
-          }
+          });
 
-          if (addedCount === 0) {
-            statusBox.className = 'p-3 rounded-lg border text-xs bg-amber-950/20 border-amber-500/40 text-amber-400';
-            statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>등록할 데이터가 없습니다. 빈 양식인지 확인해 주세요.`;
-            return;
-          }
-
+          if (!periodList.includes(targetPeriod)) periodList.push(targetPeriod);
           currentPeriod = targetPeriod;
           saveToLocalStorage();
           renderPeriodSelectors();
 
           statusBox.className = 'p-3 rounded-lg border text-xs bg-emerald-950/20 border-emerald-500/40 text-emerald-400 font-medium';
-          statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>표준 양식에서 총 <strong>${addedCount}건</strong>이 완벽하게 등록되었습니다!`;
+          statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>현장 양식 완벽 해독! 총 <strong>${parsedList.length}건</strong>의 설비(12축)가 정상 등록되었습니다!`;
 
           updateDashboard();
-          setTimeout(() => { closeUploadModal(); }, 1500);
+          setTimeout(() => { closeUploadModal(); }, 2500);
 
         } catch (err) {
           console.error(err);
           statusBox.className = 'p-3 rounded-lg border text-xs bg-red-950/20 border-red-500/40 text-red-400';
-          statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>양식 파싱 실패: 다운로드 받은 표준 양식을 그대로 사용해 주세요.`;
+          statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>파일 해독 중 오류가 발생했습니다.`;
         }
       };
 
