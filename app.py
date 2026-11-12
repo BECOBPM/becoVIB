@@ -9,7 +9,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 전체 대시보드 애플리케이션 (HTML, Tailwind CSS, Chart.js, SheetJS, ISO 20816-3 엔진)
+# 전체 대시보드 애플리케이션 (HTML, Tailwind CSS, Chart.js, SheetJS, LocalStorage 영구저장 연동)
 dashboard_html = r"""<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -101,23 +101,29 @@ dashboard_html = r"""<!DOCTYPE html>
             <h1 class="text-lg sm:text-xl font-bold tracking-tight text-white flex items-center gap-2">
               BECO-VIB Master
               <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800">ISO 20816-3</span>
+              <span id="syncStatusBadge" class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800"><i class="fa-solid fa-hard-drive mr-1"></i>로컬 저장</span>
             </h1>
           </div>
-          <p class="text-xs text-slate-400">부산환경공단 회전체 정밀진단 (전동기·펌프 부하/반부하 12축 계측 및 반기별 추이분석)</p>
+          <p class="text-xs text-slate-400">부산환경공단 회전체 정밀진단 (사업소 추가/삭제 · 12축 계측 및 추이분석)</p>
         </div>
       </div>
 
       <!-- Right Header Actions -->
       <div class="flex items-center gap-2 sm:gap-3 w-full sm:w-auto justify-end flex-wrap">
+        <!-- Google Sheets Sync Button -->
+        <button onclick="openSheetModal()" class="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs sm:text-sm font-medium py-2 px-3 rounded-lg transition duration-200 shadow">
+          <i class="fa-solid fa-table-cells text-emerald-200"></i>
+          <span>구글시트 연동</span>
+        </button>
         <!-- Add Period Button -->
         <button onclick="openAddPeriodModal()" class="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs sm:text-sm font-medium py-2 px-3 rounded-lg border border-slate-700 transition duration-200 shadow">
           <i class="fa-regular fa-calendar-plus text-cyan-400"></i>
           <span>측정주기 추가</span>
         </button>
-        <!-- Add Office Button -->
+        <!-- Manage Office Button -->
         <button onclick="openAddOfficeModal()" class="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-medium py-2 px-3 rounded-lg transition duration-200 shadow">
-          <i class="fa-solid fa-building-circle-plus"></i>
-          <span>사업소 추가</span>
+          <i class="fa-solid fa-building-circle-gear"></i>
+          <span>사업소 관리</span>
         </button>
         <!-- Add Equipment Button -->
         <button onclick="openAddModal()" class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-medium py-2 px-3 rounded-lg transition duration-200 shadow">
@@ -157,6 +163,10 @@ dashboard_html = r"""<!DOCTYPE html>
           <i class="fa-solid fa-file-export text-emerald-400"></i>
           <span>내보내기</span>
         </button>
+
+        <button onclick="resetToInitialData()" class="bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 px-2 py-1 rounded border border-slate-700 transition text-[11px]" title="저장된 데이터 초기화">
+          <i class="fa-solid fa-arrow-rotate-left mr-1"></i>초기화
+        </button>
       </div>
     </div>
   </header>
@@ -165,42 +175,39 @@ dashboard_html = r"""<!DOCTYPE html>
 
     <!-- KPI Metric Cards Grid -->
     <section class="grid grid-cols-2 lg:grid-cols-5 gap-3.5 sm:gap-4">
-      <!-- Total Equipment -->
       <div class="glass-card rounded-xl p-4 border border-slate-700/50 hover:border-slate-600 transition">
         <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
           <span>진단 대상 설비</span>
           <i class="fa-solid fa-cubes text-slate-400"></i>
         </div>
         <div class="flex items-baseline gap-2">
-          <span id="metric-total" class="text-2xl sm:text-3xl font-extrabold text-white">28</span>
+          <span id="metric-total" class="text-2xl sm:text-3xl font-extrabold text-white">0</span>
           <span class="text-xs text-slate-400">대</span>
         </div>
         <p class="text-[11px] text-slate-400 mt-2 truncate">동력 7.5kW ~ 350kW (12축)</p>
       </div>
 
-      <!-- Grade A/B Normal -->
       <div class="glass-card rounded-xl p-4 border border-emerald-500/20 bg-emerald-950/10 hover:border-emerald-500/40 transition">
         <div class="flex items-center justify-between text-emerald-400 text-xs mb-1">
           <span>양호 상태 (A·B)</span>
           <i class="fa-solid fa-circle-check text-emerald-400"></i>
         </div>
         <div class="flex items-baseline gap-2">
-          <span id="metric-ab" class="text-2xl sm:text-3xl font-extrabold text-emerald-400">11</span>
+          <span id="metric-ab" class="text-2xl sm:text-3xl font-extrabold text-emerald-400">0</span>
           <span class="text-xs text-emerald-300/70">대</span>
         </div>
         <p class="text-[11px] text-emerald-400/80 mt-2 flex items-center gap-1 font-medium">
-          <span id="metric-ab-pct">39.3%</span> 정상 가동 유지
+          <span id="metric-ab-pct">0%</span> 정상 가동 유지
         </p>
       </div>
 
-      <!-- Grade C Warning -->
       <div class="glass-card rounded-xl p-4 border border-amber-500/20 bg-amber-950/10 hover:border-amber-500/40 transition">
         <div class="flex items-center justify-between text-amber-400 text-xs mb-1">
           <span>보수필요 (C등급)</span>
           <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
         </div>
         <div class="flex items-baseline gap-2">
-          <span id="metric-c" class="text-2xl sm:text-3xl font-extrabold text-amber-400">7</span>
+          <span id="metric-c" class="text-2xl sm:text-3xl font-extrabold text-amber-400">0</span>
           <span class="text-xs text-amber-300/70">대</span>
         </div>
         <p class="text-[11px] text-amber-400/80 mt-2 flex items-center gap-1">
@@ -208,22 +215,18 @@ dashboard_html = r"""<!DOCTYPE html>
         </p>
       </div>
 
-      <!-- Grade D Immediate -->
       <div class="glass-card rounded-xl p-4 border border-red-500/30 bg-red-950/20 hover:border-red-500/50 transition">
         <div class="flex items-center justify-between text-red-400 text-xs mb-1">
           <span>즉시점검 (D등급)</span>
           <i class="fa-solid fa-circle-exclamation text-red-400 animate-pulse"></i>
         </div>
         <div class="flex items-baseline gap-2">
-          <span id="metric-d" class="text-2xl sm:text-3xl font-extrabold text-red-400">10</span>
+          <span id="metric-d" class="text-2xl sm:text-3xl font-extrabold text-red-400">0</span>
           <span class="text-xs text-red-300/70">대</span>
         </div>
-        <p class="text-[11px] text-red-300 mt-2 font-medium">
-          긴급 점검 및 분해정비
-        </p>
+        <p class="text-[11px] text-red-300 mt-2 font-medium">긴급 점검 및 분해정비</p>
       </div>
 
-      <!-- Unoperated / Testing -->
       <div class="glass-card rounded-xl p-4 border border-slate-700/50 col-span-2 lg:col-span-1">
         <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
           <span>정비/미가동 설비</span>
@@ -239,21 +242,16 @@ dashboard_html = r"""<!DOCTYPE html>
 
     <!-- Visual Chart & Trend Analysis Panel -->
     <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      
-      <!-- Chart Column (2 cols) -->
       <div class="lg:col-span-2 glass-card rounded-xl p-5 border border-slate-700/60">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-700/60 gap-3">
           <div>
-            <div class="flex items-center gap-2">
-              <h2 class="text-base font-semibold text-white flex items-center gap-2">
-                <i class="fa-solid fa-chart-line text-cyan-400"></i>
-                <span id="chartMainTitle">주요 설비 반기별 진동 추세 (Trend)</span>
-              </h2>
-            </div>
+            <h2 class="text-base font-semibold text-white flex items-center gap-2">
+              <i class="fa-solid fa-chart-line text-cyan-400"></i>
+              <span id="chartMainTitle">주요 설비 반기별 진동 추세 (Trend)</span>
+            </h2>
             <p class="text-xs text-slate-400" id="chartSubTitle">과거 반기 측정치 누적 변화와 ISO 20816-3 경보 기준치 비교</p>
           </div>
           
-          <!-- Chart View Mode Toggle -->
           <div class="flex items-center gap-1.5 bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs">
             <button id="btnModeTrend" onclick="setChartMode('trend')" class="px-3 py-1 rounded font-bold bg-cyan-600 text-white transition">
               <i class="fa-solid fa-chart-line mr-1"></i>반기별 추이선
@@ -269,7 +267,7 @@ dashboard_html = r"""<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- ISO Standard Quick Guide (1 col) -->
+      <!-- ISO Standard Quick Guide -->
       <div class="glass-card rounded-xl p-5 border border-slate-700/60 flex flex-col justify-between">
         <div>
           <div class="flex items-center justify-between pb-3 border-b border-slate-700/60">
@@ -281,7 +279,6 @@ dashboard_html = r"""<!DOCTYPE html>
           </div>
           
           <div class="mt-4 space-y-3 text-xs">
-            <!-- Group 1 -->
             <div class="p-2.5 rounded-lg bg-slate-800/80 border border-slate-700">
               <div class="flex justify-between items-center font-bold text-slate-200">
                 <span class="text-cyan-300">Group 1 (&gt; 300 kW)</span>
@@ -294,7 +291,6 @@ dashboard_html = r"""<!DOCTYPE html>
               </div>
             </div>
 
-            <!-- Group 2 -->
             <div class="p-2.5 rounded-lg bg-slate-800/80 border border-slate-700">
               <div class="flex justify-between items-center font-bold text-slate-200">
                 <span class="text-emerald-300">Group 2 (15 ~ 300 kW)</span>
@@ -307,7 +303,6 @@ dashboard_html = r"""<!DOCTYPE html>
               </div>
             </div>
 
-            <!-- Group 4 -->
             <div class="p-2.5 rounded-lg bg-slate-800/80 border border-slate-700">
               <div class="flex justify-between items-center font-bold text-slate-200">
                 <span class="text-purple-300">Group 4 (&lt; 15 kW)</span>
@@ -331,7 +326,6 @@ dashboard_html = r"""<!DOCTYPE html>
 
     <!-- Main Table Section -->
     <section class="glass-card rounded-xl border border-slate-700/60 overflow-hidden">
-      <!-- Table Header & Controls -->
       <div class="p-4 sm:p-5 border-b border-slate-700/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 class="text-base font-bold text-white flex items-center gap-2">
@@ -347,14 +341,17 @@ dashboard_html = r"""<!DOCTYPE html>
 
         <!-- Filter Controls -->
         <div class="flex flex-wrap items-center gap-2">
-          <!-- Office Secondary Filter -->
+          <button onclick="exportToCSV()" class="bg-emerald-700/80 hover:bg-emerald-600 text-white text-xs font-semibold px-3 py-2 rounded-lg border border-emerald-500/50 transition flex items-center gap-1.5 shadow" title="현재 목록 엑셀 파일(.xlsx)로 내려받기">
+            <i class="fa-solid fa-file-excel"></i>
+            <span>엑셀 다운로드</span>
+          </button>
+
           <div class="relative">
             <select id="officeFilterDropdown" onchange="syncOfficeFilter(this.value)" class="bg-slate-800 border border-slate-600 text-slate-200 text-xs rounded-lg px-3 py-2 focus:ring-2 focus:ring-cyan-500 focus:outline-none pr-8 cursor-pointer">
               <option value="ALL">전체 사업소</option>
             </select>
           </div>
 
-          <!-- Group Filter -->
           <div class="relative">
             <select id="groupFilter" onchange="renderTable()" class="bg-slate-800 border border-slate-600 text-slate-200 text-xs rounded-lg px-3 py-2 focus:ring-2 focus:ring-cyan-500 focus:outline-none pr-8 cursor-pointer">
               <option value="ALL">전체 용량 구분</option>
@@ -364,7 +361,6 @@ dashboard_html = r"""<!DOCTYPE html>
             </select>
           </div>
 
-          <!-- Status Filter -->
           <div class="relative">
             <select id="statusFilter" onchange="renderTable()" class="bg-slate-800 border border-slate-600 text-slate-200 text-xs rounded-lg px-3 py-2 focus:ring-2 focus:ring-cyan-500 focus:outline-none pr-8 cursor-pointer">
               <option value="ALL">전체 평가 등급</option>
@@ -374,7 +370,6 @@ dashboard_html = r"""<!DOCTYPE html>
             </select>
           </div>
 
-          <!-- Search Input -->
           <div class="relative w-full sm:w-44">
             <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-xs"></i>
             <input type="text" id="searchInput" oninput="renderTable()" placeholder="설비명/부위 검색..." class="w-full bg-slate-800 border border-slate-600 text-slate-200 text-xs rounded-lg pl-8 pr-3 py-2 focus:ring-2 focus:ring-cyan-500 focus:outline-none">
@@ -408,6 +403,168 @@ dashboard_html = r"""<!DOCTYPE html>
     </section>
   </main>
 
+  <!-- MODAL: Edit Equipment Modal -->
+  <div id="editModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-2xl shadow-2xl p-6 relative max-h-[92vh] overflow-y-auto custom-scrollbar">
+      <button onclick="closeEditModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white transition">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-5 border-b border-slate-700 pb-3">
+        <div class="h-10 w-10 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-pen-to-square"></i>
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-white">설비 정보 및 계측값 수정</h3>
+          <p class="text-xs text-slate-400">설비명, 용량, 12축 계측값을 수정하면 ISO 등급이 즉시 재계산됩니다.</p>
+        </div>
+      </div>
+
+      <form id="editEquipForm" onsubmit="handleEquipmentEditSubmit(event)" class="space-y-4 text-xs">
+        <input type="hidden" id="edit_id">
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">소속 사업소 <span class="text-rose-400">*</span></label>
+            <select id="edit_office" required class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500"></select>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">측정 시기 <span class="text-rose-400">*</span></label>
+            <select id="edit_period" required class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500"></select>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">설비명 <span class="text-rose-400">*</span></label>
+            <input type="text" id="edit_name" required placeholder="설비명 입력" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 font-bold">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">정격 용량 (kW) <span class="text-rose-400">*</span></label>
+            <input type="number" id="edit_power" required step="0.1" min="0.1" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 font-mono font-bold text-cyan-300">
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">기초 지지 조건</label>
+            <select id="edit_foundation" onchange="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+              <option value="rigid">강성 기초 (Rigid)</option>
+              <option value="flexible">탄성 기초 (Flexible)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 4개 포인트(12축) 계측값 입력 그리드 -->
+        <div class="p-3 rounded-xl bg-slate-800/80 border border-slate-700 space-y-3">
+          <span class="font-bold text-cyan-300 block text-xs"><i class="fa-solid fa-arrows-to-dot mr-1.5"></i>4개 계측 지점 진동속도 RMS (mm/s)</span>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-700">
+              <span class="text-[11px] font-bold text-amber-300 block mb-1.5"><i class="fa-solid fa-bolt mr-1"></i>1. 전동기 부하측 (M-DE)</span>
+              <div class="grid grid-cols-3 gap-1.5">
+                <div>
+                  <span class="text-[10px] text-slate-400 block">수평 H(X)</span>
+                  <input type="number" id="edit_m_de_h" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+                <div>
+                  <span class="text-[10px] text-slate-400 block">수직 V(Y)</span>
+                  <input type="number" id="edit_m_de_v" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+                <div>
+                  <span class="text-[10px] text-slate-400 block">축방향 A(Z)</span>
+                  <input type="number" id="edit_m_de_a" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+              </div>
+            </div>
+
+            <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-700">
+              <span class="text-[11px] font-bold text-amber-300 block mb-1.5"><i class="fa-solid fa-bolt mr-1"></i>2. 전동기 반부하측 (M-NDE)</span>
+              <div class="grid grid-cols-3 gap-1.5">
+                <div>
+                  <span class="text-[10px] text-slate-400 block">수평 H(X)</span>
+                  <input type="number" id="edit_m_nde_h" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+                <div>
+                  <span class="text-[10px] text-slate-400 block">수직 V(Y)</span>
+                  <input type="number" id="edit_m_nde_v" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+                <div>
+                  <span class="text-[10px] text-slate-400 block">축방향 A(Z)</span>
+                  <input type="number" id="edit_m_nde_a" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-700">
+              <span class="text-[11px] font-bold text-cyan-300 block mb-1.5"><i class="fa-solid fa-fan mr-1"></i>3. 펌프 부하측 (P-DE)</span>
+              <div class="grid grid-cols-3 gap-1.5">
+                <div>
+                  <span class="text-[10px] text-slate-400 block">수평 H(X)</span>
+                  <input type="number" id="edit_p_de_h" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+                <div>
+                  <span class="text-[10px] text-slate-400 block">수직 V(Y)</span>
+                  <input type="number" id="edit_p_de_v" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+                <div>
+                  <span class="text-[10px] text-slate-400 block">축방향 A(Z)</span>
+                  <input type="number" id="edit_p_de_a" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+              </div>
+            </div>
+
+            <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-700">
+              <span class="text-[11px] font-bold text-cyan-300 block mb-1.5"><i class="fa-solid fa-fan mr-1"></i>4. 펌프 반부하측 (P-NDE)</span>
+              <div class="grid grid-cols-3 gap-1.5">
+                <div>
+                  <span class="text-[10px] text-slate-400 block">수평 H(X)</span>
+                  <input type="number" id="edit_p_nde_h" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+                <div>
+                  <span class="text-[10px] text-slate-400 block">수직 V(Y)</span>
+                  <input type="number" id="edit_p_nde_v" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+                <div>
+                  <span class="text-[10px] text-slate-400 block">축방향 A(Z)</span>
+                  <input type="number" id="edit_p_nde_a" step="0.01" min="0" oninput="autoCalcEditGrade()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-slate-100 font-mono text-center">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="editAutoEvalBanner" class="p-3 rounded-xl border bg-slate-800/80 border-slate-700 flex items-center justify-between">
+          <div>
+            <span class="text-[11px] text-slate-400 block font-mono" id="editEvalGroupText">ISO 분류: Group 2</span>
+            <span class="text-xs font-semibold text-slate-200" id="editEvalCriteriaText">기준치: A/B ≤ 2.8 | C ≤ 4.5 | D > 4.5</span>
+            <span class="text-[11px] text-cyan-300 block mt-0.5" id="editEvalMaxPointText">최대 진동 부위: -</span>
+          </div>
+          <div class="text-right">
+            <span id="editEvalBadge" class="inline-block px-3 py-1 rounded text-xs font-black grade-badge-C">C등급</span>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-slate-300 font-medium mb-1">현장 진단 요약 및 이상 부위</label>
+          <input type="text" id="edit_summary" placeholder="진단 내용 입력" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+        </div>
+
+        <div>
+          <label class="block text-slate-300 font-medium mb-1">후속 정비대책</label>
+          <input type="text" id="edit_action" placeholder="조치 대책 입력" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+        </div>
+
+        <div class="pt-3 border-t border-slate-700 flex justify-end gap-2">
+          <button type="button" onclick="closeEditModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-medium transition">취소</button>
+          <button type="submit" class="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg transition shadow-md">수정사항 저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- MODAL 1: Add Custom Equipment with 4-Point 12-Axis Input -->
   <div id="addModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
     <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-2xl shadow-2xl p-6 relative max-h-[92vh] overflow-y-auto custom-scrollbar">
@@ -427,23 +584,16 @@ dashboard_html = r"""<!DOCTYPE html>
 
       <form id="addEquipForm" onsubmit="handleEquipmentSubmit(event)" class="space-y-4 text-xs">
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <!-- 사업소 선택 -->
           <div>
             <label class="block text-slate-300 font-medium mb-1">소속 사업소 <span class="text-rose-400">*</span></label>
-            <select id="inpOffice" required class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500">
-              <!-- Dynamically populated -->
-            </select>
+            <select id="inpOffice" required class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500"></select>
           </div>
 
-          <!-- 측정 시기 -->
           <div>
             <label class="block text-slate-300 font-medium mb-1">측정 시기 <span class="text-rose-400">*</span></label>
-            <select id="inpPeriod" required class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500">
-              <!-- Dynamically populated -->
-            </select>
+            <select id="inpPeriod" required class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500"></select>
           </div>
 
-          <!-- 설비명 -->
           <div>
             <label class="block text-slate-300 font-medium mb-1">설비명 <span class="text-rose-400">*</span></label>
             <input type="text" id="inpName" required placeholder="예: #3 응축수펌프" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500">
@@ -451,13 +601,11 @@ dashboard_html = r"""<!DOCTYPE html>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <!-- 정격 용량 (kW) -->
           <div>
             <label class="block text-slate-300 font-medium mb-1">정격 용량 (kW) <span class="text-rose-400">*</span></label>
             <input type="number" id="inpPower" required step="0.1" min="0.1" value="75" oninput="autoCalcGrade()" placeholder="kW 단위" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 font-mono">
           </div>
 
-          <!-- 기초 지지 조건 -->
           <div>
             <label class="block text-slate-300 font-medium mb-1">기초 지지 조건</label>
             <select id="inpFoundation" onchange="autoCalcGrade()" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500">
@@ -471,7 +619,6 @@ dashboard_html = r"""<!DOCTYPE html>
         <div class="p-3 rounded-xl bg-slate-800/80 border border-slate-700 space-y-3">
           <span class="font-bold text-cyan-300 block text-xs"><i class="fa-solid fa-arrows-to-dot mr-1.5"></i>4개 계측 지점 진동속도 RMS (mm/s)</span>
 
-          <!-- 전동기 부하측 / 반부하측 -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
             <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-700">
               <span class="text-[11px] font-bold text-amber-300 block mb-1.5"><i class="fa-solid fa-bolt mr-1"></i>1. 전동기 부하측 (M-DE)</span>
@@ -510,7 +657,6 @@ dashboard_html = r"""<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- 펌프 부하측 / 반부하측 -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-700">
               <span class="text-[11px] font-bold text-cyan-300 block mb-1.5"><i class="fa-solid fa-fan mr-1"></i>3. 펌프 부하측 (P-DE)</span>
@@ -562,13 +708,11 @@ dashboard_html = r"""<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- 진단 요약 및 이상 부위 -->
         <div>
           <label class="block text-slate-300 font-medium mb-1">현장 진단 요약 및 이상 부위</label>
           <input type="text" id="inpSummary" placeholder="예: 펌프 부하측 베어링 진동 및 미세 발열 확인" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500">
         </div>
 
-        <!-- 후속 정비 대책 -->
         <div>
           <label class="block text-slate-300 font-medium mb-1">후속 정비대책</label>
           <input type="text" id="inpAction" placeholder="예: 차기 계획정비 시 베어링 교체 및 축정렬 재실시" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500">
@@ -602,12 +746,9 @@ dashboard_html = r"""<!DOCTYPE html>
       <div class="space-y-4 text-xs">
         <div class="flex items-center justify-between bg-slate-800/80 p-2.5 rounded-lg border border-slate-700">
           <label class="text-slate-300 font-medium">데이터 반영 측정시기:</label>
-          <select id="uploadPeriodSelect" class="bg-slate-900 border border-slate-600 rounded px-2.5 py-1 text-cyan-300 font-bold focus:outline-none">
-            <!-- Populated dynamically -->
-          </select>
+          <select id="uploadPeriodSelect" class="bg-slate-900 border border-slate-600 rounded px-2.5 py-1 text-cyan-300 font-bold focus:outline-none"></select>
         </div>
 
-        <!-- Template Download Guide -->
         <div class="p-3 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-between">
           <div>
             <span class="font-bold text-slate-200 block">진동측정결과 시트 표준 양식 (4개 포인트 12축)</span>
@@ -619,7 +760,6 @@ dashboard_html = r"""<!DOCTYPE html>
           </button>
         </div>
 
-        <!-- Drag & Drop Area -->
         <div id="dropZone" onclick="document.getElementById('fileInput').click()" class="border-2 border-dashed border-slate-600 hover:border-cyan-500 rounded-2xl p-8 text-center cursor-pointer transition bg-slate-800/40 hover:bg-slate-800/70">
           <i class="fa-solid fa-cloud-arrow-up text-3xl text-cyan-400 mb-2"></i>
           <p class="text-slate-200 font-bold mb-1">엑셀(.xlsx, .xls) 또는 CSV 파일을 여기로 드래그하세요</p>
@@ -627,7 +767,6 @@ dashboard_html = r"""<!DOCTYPE html>
           <input type="file" id="fileInput" accept=".xlsx, .xls, .csv" onchange="handleFileSelect(event)" class="hidden">
         </div>
 
-        <!-- Upload Status -->
         <div id="uploadStatusBox" class="hidden p-3 rounded-lg border text-xs"></div>
 
         <div class="pt-3 border-t border-slate-700 flex justify-between items-center">
@@ -669,24 +808,26 @@ dashboard_html = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- MODAL 4: Add Custom Office -->
+  <!-- MODAL 4: Manage & Add / Delete Office Modal -->
   <div id="addOfficeModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
-    <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-md rounded-2xl shadow-2xl p-6 relative">
+    <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-lg rounded-2xl shadow-2xl p-6 relative max-h-[92vh] overflow-y-auto custom-scrollbar">
       <button onclick="closeAddOfficeModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white transition">
         <i class="fa-solid fa-xmark text-lg"></i>
       </button>
 
       <div class="flex items-center gap-3 mb-5 border-b border-slate-700 pb-3">
         <div class="h-10 w-10 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/40 flex items-center justify-center text-lg">
-          <i class="fa-solid fa-building-circle-plus"></i>
+          <i class="fa-solid fa-building-circle-gear"></i>
         </div>
         <div>
-          <h3 class="text-base font-bold text-white">신규 사업소 추가</h3>
-          <p class="text-xs text-slate-400">추가된 사업소는 탭 및 설비 대장에 즉시 반영됩니다.</p>
+          <h3 class="text-base font-bold text-white">사업소 추가 및 삭제 관리</h3>
+          <p class="text-xs text-slate-400">신규 사업소를 추가하거나 기존 사업소를 삭제할 수 있습니다.</p>
         </div>
       </div>
 
-      <form id="addOfficeForm" onsubmit="handleOfficeSubmit(event)" class="space-y-4 text-xs">
+      <!-- Add Office Form -->
+      <form id="addOfficeForm" onsubmit="handleOfficeSubmit(event)" class="space-y-3 text-xs pb-4 border-b border-slate-700/80">
+        <span class="font-bold text-slate-200 block"><i class="fa-solid fa-plus text-indigo-400 mr-1"></i>새 사업소 등록</span>
         <div>
           <label class="block text-slate-300 font-medium mb-1">사업소 명칭 <span class="text-rose-400">*</span></label>
           <input type="text" id="inpOfficeName" required placeholder="예: 남부사업소, 서부사업소, 기장사업소" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
@@ -718,11 +859,25 @@ dashboard_html = r"""<!DOCTYPE html>
           </div>
         </div>
 
-        <div class="pt-3 border-t border-slate-700 flex justify-end gap-2">
-          <button type="button" onclick="closeAddOfficeModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-medium transition">취소</button>
-          <button type="submit" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg transition shadow-md">사업소 등록</button>
+        <div class="flex justify-end pt-1">
+          <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg transition shadow-md flex items-center gap-1.5">
+            <i class="fa-solid fa-plus"></i>
+            <span>사업소 등록</span>
+          </button>
         </div>
       </form>
+
+      <!-- Office List & Delete Area -->
+      <div class="pt-4 text-xs space-y-2">
+        <span class="font-bold text-slate-200 block"><i class="fa-solid fa-list-check text-cyan-400 mr-1"></i>등록된 사업소 목록 (삭제 관리)</span>
+        <div id="officeManageList" class="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <div class="pt-4 mt-4 border-t border-slate-700 flex justify-end">
+        <button type="button" onclick="closeAddOfficeModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-medium transition text-xs">닫기</button>
+      </div>
     </div>
   </div>
 
@@ -803,28 +958,84 @@ dashboard_html = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- MODAL 6: Detail Equipment Modal with 4-Point (12-Axis) & History Trend -->
+  <!-- MODAL 6: Detail Equipment Modal -->
   <div id="detailModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
     <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-3xl rounded-2xl shadow-2xl p-6 relative max-h-[92vh] overflow-y-auto custom-scrollbar">
       <button onclick="closeDetailModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white transition">
         <i class="fa-solid fa-xmark text-lg"></i>
       </button>
 
-      <div id="detailModalContent">
-        <!-- Rendered by JS -->
+      <div id="detailModalContent"></div>
+    </div>
+  </div>
+
+  <!-- MODAL 7: Google Sheets Integration Modal -->
+  <div id="sheetModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-xl rounded-2xl shadow-2xl p-6 relative max-h-[92vh] overflow-y-auto custom-scrollbar">
+      <button onclick="closeSheetModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white transition">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-5 border-b border-slate-700 pb-3">
+        <div class="h-10 w-10 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-table-cells"></i>
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-white">구글 시트(Google Sheets) 중앙 DB 연동</h3>
+          <p class="text-xs text-slate-400">구글 시트를 클라우드 DB로 사용하여 여러 사용자와 실시간 데이터를 공유합니다.</p>
+        </div>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <div>
+          <label class="block text-slate-300 font-medium mb-1">구글 웹 앱 배포 URL (Google Apps Script Web App URL)</label>
+          <input type="url" id="inpSheetUrl" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-[11px]">
+          <p class="text-[11px] text-slate-400 mt-1">구글 스프레드시트의 [확장 프로그램 > Apps Script]에서 배포된 웹 앱 주소를 붙여넣으세요.</p>
+        </div>
+
+        <div class="flex items-center gap-2 pt-2">
+          <button onclick="saveSheetUrl()" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-lg transition shadow">
+            <i class="fa-solid fa-link mr-1"></i>URL 저장 및 연결
+          </button>
+          <button onclick="disconnectSheet()" class="px-3 py-2 bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 rounded-lg transition border border-slate-700">
+            연결 해제
+          </button>
+        </div>
+
+        <div class="p-3.5 rounded-xl bg-slate-800/80 border border-slate-700 space-y-2">
+          <span class="font-bold text-slate-200 block text-xs"><i class="fa-solid fa-arrows-rotate text-cyan-400 mr-1.5"></i>데이터 동기화 작업</span>
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="syncFromGoogleSheets()" class="p-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-cyan-300 font-bold border border-slate-600 transition flex items-center justify-center gap-1.5">
+              <i class="fa-solid fa-cloud-arrow-down"></i>
+              <span>구글시트에서 불러오기</span>
+            </button>
+            <button onclick="syncToGoogleSheets()" class="p-2.5 rounded-lg bg-emerald-800/60 hover:bg-emerald-700 text-emerald-200 font-bold border border-emerald-600/50 transition flex items-center justify-center gap-1.5">
+              <i class="fa-solid fa-cloud-arrow-up"></i>
+              <span>현재 데이터 시트에 저장</span>
+            </button>
+          </div>
+          <div id="sheetSyncStatusBox" class="hidden p-2.5 rounded border text-[11px] font-medium"></div>
+        </div>
+
+        <div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-slate-400 leading-relaxed text-[11px]">
+          <p class="font-bold text-slate-300 mb-1"><i class="fa-solid fa-circle-info text-amber-400 mr-1"></i>구글 시트 연동 간단 3단계:</p>
+          <ol class="list-decimal list-inside space-y-1">
+            <li>구글 드라이브에서 새 스프레드시트를 생성합니다.</li>
+            <li>[확장 프로그램] → [Apps Script] 클릭 후 제공된 연동 코드를 붙여넣습니다.</li>
+            <li>[배포] → [새 배포] (액세스 권한: 모든 사용자) 후 나오는 URL을 위에 입력합니다.</li>
+          </ol>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- JavaScript Application Logic -->
+  <!-- JavaScript Application Logic with LocalStorage & Google Sheets Sync -->
   <script>
-    // Periods list (Half-Year Cycles)
+    let googleSheetAppUrl = localStorage.getItem('becovib_google_sheet_url') || '';
     let periodList = ['2025년 상반기', '2025년 하반기', '2026년 상반기', '2026년 하반기'];
     let currentPeriod = '2026년 상반기';
 
-    // Master Multi-Office Equipment Dataset with 4 Points (DE/NDE) & 12 Axes Measurements
-    let equipmentData = [
-      // 1. 에너지사업소
+    const defaultEquipmentData = [
       {
         id: 'fd_fan',
         office: '에너지사업소',
@@ -977,11 +1188,196 @@ dashboard_html = r"""<!DOCTYPE html>
       }
     ];
 
-    let officeList = [
+    let equipmentData = [];
+
+    const defaultOfficeList = [
       { name: '에너지사업소', icon: 'fa-fire-flame-curved', color: 'text-amber-400' },
       { name: '명지사업소', icon: 'fa-industry', color: 'text-cyan-400' },
       { name: '해운대사업소', icon: 'fa-water', color: 'text-blue-400' }
     ];
+
+    let officeList = [];
+
+    function saveToLocalStorage() {
+      try {
+        localStorage.setItem('becovib_equipment_data', JSON.stringify(equipmentData));
+        localStorage.setItem('becovib_office_list', JSON.stringify(officeList));
+        localStorage.setItem('becovib_period_list', JSON.stringify(periodList));
+        localStorage.setItem('becovib_current_period', currentPeriod);
+        if (googleSheetAppUrl) {
+          localStorage.setItem('becovib_google_sheet_url', googleSheetAppUrl);
+        }
+      } catch (err) {
+        console.warn('LocalStorage save failed:', err);
+      }
+    }
+
+    function updateSyncBadge() {
+      const badge = document.getElementById('syncStatusBadge');
+      if (!badge) return;
+      if (googleSheetAppUrl) {
+        badge.className = 'text-[10px] font-semibold px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-700 cursor-pointer';
+        badge.innerHTML = '<i class="fa-solid fa-cloud mr-1"></i>구글시트 연동중';
+      } else {
+        badge.className = 'text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 cursor-pointer';
+        badge.innerHTML = '<i class="fa-solid fa-hard-drive mr-1"></i>로컬 저장';
+      }
+    }
+
+    function openSheetModal() {
+      document.getElementById('sheetModal').classList.remove('hidden');
+      document.getElementById('inpSheetUrl').value = googleSheetAppUrl;
+      const statusBox = document.getElementById('sheetSyncStatusBox');
+      statusBox.classList.add('hidden');
+    }
+
+    function closeSheetModal() {
+      document.getElementById('sheetModal').classList.add('hidden');
+    }
+
+    function saveSheetUrl() {
+      const url = document.getElementById('inpSheetUrl').value.trim();
+      const statusBox = document.getElementById('sheetSyncStatusBox');
+      statusBox.classList.remove('hidden');
+
+      if (!url) {
+        statusBox.className = 'p-2.5 rounded border text-[11px] bg-red-950/20 border-red-500/40 text-red-400';
+        statusBox.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1"></i>웹 앱 URL을 입력해 주세요.';
+        return;
+      }
+
+      googleSheetAppUrl = url;
+      localStorage.setItem('becovib_google_sheet_url', url);
+      updateSyncBadge();
+
+      statusBox.className = 'p-2.5 rounded border text-[11px] bg-emerald-950/20 border-emerald-500/40 text-emerald-400';
+      statusBox.innerHTML = '<i class="fa-solid fa-check mr-1"></i>구글 시트 연동 URL이 저장되었습니다.';
+    }
+
+    function disconnectSheet() {
+      googleSheetAppUrl = '';
+      localStorage.removeItem('becovib_google_sheet_url');
+      document.getElementById('inpSheetUrl').value = '';
+      updateSyncBadge();
+      const statusBox = document.getElementById('sheetSyncStatusBox');
+      statusBox.classList.remove('hidden');
+      statusBox.className = 'p-2.5 rounded border text-[11px] bg-slate-800 border-slate-700 text-slate-300';
+      statusBox.innerHTML = '구글 시트 연동이 해제되었습니다. 로컬 저장소 모드로 작동합니다.';
+    }
+
+    async function syncFromGoogleSheets() {
+      const statusBox = document.getElementById('sheetSyncStatusBox');
+      statusBox.classList.remove('hidden');
+
+      if (!googleSheetAppUrl) {
+        statusBox.className = 'p-2.5 rounded border text-[11px] bg-amber-950/20 border-amber-500/40 text-amber-400';
+        statusBox.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1"></i>먼저 웹 앱 URL을 입력하고 저장해 주세요.';
+        return;
+      }
+
+      statusBox.className = 'p-2.5 rounded border text-[11px] bg-cyan-950/20 border-cyan-500/40 text-cyan-300';
+      statusBox.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>구글 시트에서 최신 데이터를 가져오는 중...';
+
+      try {
+        const response = await fetch(googleSheetAppUrl);
+        const result = await response.json();
+
+        if (result.status === 'success' && Array.isArray(result.data) && result.data.length > 0) {
+          equipmentData = result.data;
+          
+          equipmentData.forEach(item => {
+            if (item.period && !periodList.includes(item.period)) periodList.push(item.period);
+            ensureOfficeRegistered(item.office);
+          });
+
+          saveToLocalStorage();
+          renderPeriodSelectors();
+          renderOfficeTabs();
+          updateDashboard();
+
+          statusBox.className = 'p-2.5 rounded border text-[11px] bg-emerald-950/20 border-emerald-500/40 text-emerald-400 font-semibold';
+          statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>구글 시트에서 총 ${equipmentData.length}개의 설비 데이터를 성공적으로 동기화했습니다!`;
+        } else {
+          statusBox.className = 'p-2.5 rounded border text-[11px] bg-amber-950/20 border-amber-500/40 text-amber-300';
+          statusBox.innerHTML = '구글 시트가 비어 있거나 올바른 데이터 형식이 아닙니다.';
+        }
+      } catch (err) {
+        console.error(err);
+        statusBox.className = 'p-2.5 rounded border text-[11px] bg-red-950/20 border-red-500/40 text-red-400';
+        statusBox.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1"></i>동기화 실패: 웹 앱 권한 설정 또는 URL을 확인해 주세요.';
+      }
+    }
+
+    async function syncToGoogleSheets() {
+      const statusBox = document.getElementById('sheetSyncStatusBox');
+      statusBox.classList.remove('hidden');
+
+      if (!googleSheetAppUrl) {
+        statusBox.className = 'p-2.5 rounded border text-[11px] bg-amber-950/20 border-amber-500/40 text-amber-400';
+        statusBox.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1"></i>먼저 웹 앱 URL을 입력하고 저장해 주세요.';
+        return;
+      }
+
+      statusBox.className = 'p-2.5 rounded border text-[11px] bg-cyan-950/20 border-cyan-500/40 text-cyan-300';
+      statusBox.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>현재 대장 데이터를 구글 시트에 기록 중...';
+
+      try {
+        const payload = JSON.stringify({
+          action: 'save',
+          data: equipmentData
+        });
+
+        await fetch(googleSheetAppUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload
+        });
+
+        statusBox.className = 'p-2.5 rounded border text-[11px] bg-emerald-950/20 border-emerald-500/40 text-emerald-400 font-semibold';
+        statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>구글 스프레드시트에 성공적으로 저장 전송되었습니다!`;
+      } catch (err) {
+        console.error(err);
+        statusBox.className = 'p-2.5 rounded border text-[11px] bg-red-950/20 border-red-500/40 text-red-400';
+        statusBox.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1"></i>저장 실패: 네트워크 또는 Apps Script 설정을 확인해 주세요.';
+      }
+    }
+
+    function loadFromLocalStorage() {
+      try {
+        const savedEquip = localStorage.getItem('becovib_equipment_data');
+        const savedOffices = localStorage.getItem('becovib_office_list');
+        const savedPeriods = localStorage.getItem('becovib_period_list');
+        const savedCurPeriod = localStorage.getItem('becovib_current_period');
+
+        if (savedEquip) equipmentData = JSON.parse(savedEquip);
+        else equipmentData = JSON.parse(JSON.stringify(defaultEquipmentData));
+
+        if (savedOffices) officeList = JSON.parse(savedOffices);
+        else officeList = JSON.parse(JSON.stringify(defaultOfficeList));
+
+        if (savedPeriods) periodList = JSON.parse(savedPeriods);
+        if (savedCurPeriod && periodList.includes(savedCurPeriod)) currentPeriod = savedCurPeriod;
+
+      } catch (err) {
+        console.warn('LocalStorage load failed, using defaults:', err);
+        equipmentData = JSON.parse(JSON.stringify(defaultEquipmentData));
+        officeList = JSON.parse(JSON.stringify(defaultOfficeList));
+      }
+    }
+
+    function resetToInitialData() {
+      if (confirm('저장된 설비 및 사업소 데이터를 최초 기본값으로 초기화하시겠습니까?')) {
+        localStorage.removeItem('becovib_equipment_data');
+        localStorage.removeItem('becovib_office_list');
+        localStorage.removeItem('becovib_period_list');
+        localStorage.removeItem('becovib_current_period');
+        loadFromLocalStorage();
+        renderPeriodSelectors();
+        renderOfficeTabs();
+        updateDashboard();
+      }
+    }
 
     let currentOffice = 'ALL';
     let currentChartMode = 'trend';
@@ -989,7 +1385,6 @@ dashboard_html = r"""<!DOCTYPE html>
     let detailChart = null;
     let detailAxesChart = null;
 
-    // Render Period Selection Dropdowns
     function renderPeriodSelectors() {
       const mainSel = document.getElementById('periodFilterSelect');
       const modalSel = document.getElementById('inpPeriod');
@@ -1007,6 +1402,7 @@ dashboard_html = r"""<!DOCTYPE html>
 
     function switchPeriod(val) {
       currentPeriod = val;
+      saveToLocalStorage();
       updateDashboard();
     }
 
@@ -1027,20 +1423,20 @@ dashboard_html = r"""<!DOCTYPE html>
         periodList.push(newP);
       }
       currentPeriod = newP;
+      saveToLocalStorage();
       renderPeriodSelectors();
       document.getElementById('addPeriodForm').reset();
       closeAddPeriodModal();
       updateDashboard();
     }
 
-    // Render Office Tabs Dynamically
     function renderOfficeTabs() {
       const container = document.getElementById('officeTabs');
       const dropdown = document.getElementById('officeFilterDropdown');
       const selectModal = document.getElementById('inpOffice');
 
       let tabsHtml = `
-        <button onclick="switchOffice('ALL')" class="office-tab px-3 py-1.5 rounded-lg text-xs font-bold transition ${currentOffice === 'ALL' ? 'bg-cyan-600 text-white shadow' : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'}" data-office="ALL">
+        <button onclick="switchOffice('ALL')" class="office-tab px-3 py-1.5 rounded-lg text-xs font-bold transition shrink-0 ${currentOffice === 'ALL' ? 'bg-cyan-600 text-white shadow' : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'}" data-office="ALL">
           전체 사업소
         </button>
       `;
@@ -1048,10 +1444,15 @@ dashboard_html = r"""<!DOCTYPE html>
       officeList.forEach(off => {
         const isSelected = currentOffice === off.name;
         tabsHtml += `
-          <button onclick="switchOffice('${off.name}')" class="office-tab px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${isSelected ? 'bg-cyan-600 text-white font-bold shadow' : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'}" data-office="${off.name}">
-            <i class="fa-solid ${off.icon} ${isSelected ? 'text-white' : off.color}"></i>
-            <span>${off.name}</span>
-          </button>
+          <div class="inline-flex items-center rounded-lg transition shrink-0 ${isSelected ? 'bg-cyan-600 text-white shadow' : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'}">
+            <button onclick="switchOffice('${off.name}')" class="px-2.5 py-1.5 text-xs font-semibold flex items-center gap-1.5" data-office="${off.name}">
+              <i class="fa-solid ${off.icon} ${isSelected ? 'text-white' : off.color}"></i>
+              <span>${off.name}</span>
+            </button>
+            <button onclick="deleteOffice('${off.name}', event)" class="pr-2 pl-1 py-1.5 text-[11px] opacity-60 hover:opacity-100 hover:text-rose-300 transition" title="${off.name} 삭제">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
         `;
       });
       container.innerHTML = tabsHtml;
@@ -1070,10 +1471,40 @@ dashboard_html = r"""<!DOCTYPE html>
         });
         selectModal.innerHTML = selectHtml;
       }
+
+      renderOfficeManageList();
+    }
+
+    function renderOfficeManageList() {
+      const listContainer = document.getElementById('officeManageList');
+      if (!listContainer) return;
+
+      if (officeList.length === 0) {
+        listContainer.innerHTML = '<p class="text-slate-500 py-2 text-center">등록된 사업소가 없습니다.</p>';
+        return;
+      }
+
+      listContainer.innerHTML = officeList.map(off => {
+        const count = equipmentData.filter(e => e.office === off.name).length;
+        return `
+          <div class="flex items-center justify-between p-2 rounded-lg bg-slate-800/80 border border-slate-700">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid ${off.icon} ${off.color}"></i>
+              <span class="font-bold text-slate-200">${off.name}</span>
+              <span class="text-[10px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-700">설비 ${count}대</span>
+            </div>
+            <button type="button" onclick="deleteOffice('${off.name}')" class="px-2 py-1 rounded bg-rose-950/40 hover:bg-rose-900/80 text-rose-300 hover:text-white border border-rose-800/50 text-[11px] transition flex items-center gap-1">
+              <i class="fa-solid fa-trash-can"></i>
+              <span>삭제</span>
+            </button>
+          </div>
+        `;
+      }).join('');
     }
 
     function openAddOfficeModal() {
       document.getElementById('addOfficeModal').classList.remove('hidden');
+      renderOfficeManageList();
       document.getElementById('inpOfficeName').focus();
     }
     function closeAddOfficeModal() {
@@ -1088,8 +1519,7 @@ dashboard_html = r"""<!DOCTYPE html>
       if (!name) return;
 
       if (officeList.some(o => o.name === name)) {
-        document.getElementById('inpOfficeName').classList.add('ring-2', 'ring-rose-500');
-        setTimeout(() => document.getElementById('inpOfficeName').classList.remove('ring-2', 'ring-rose-500'), 1500);
+        alert('이미 등록되어 있는 사업소 명칭입니다.');
         return;
       }
 
@@ -1099,26 +1529,52 @@ dashboard_html = r"""<!DOCTYPE html>
       else if (icon === 'fa-solar-panel') color = 'text-emerald-400';
 
       officeList.push({ name, icon, color });
+      saveToLocalStorage();
       document.getElementById('addOfficeForm').reset();
-      closeAddOfficeModal();
-
       renderOfficeTabs();
       switchOffice(name);
     }
 
+    function deleteOffice(officeName, evt) {
+      if (evt) evt.stopPropagation();
+
+      const count = equipmentData.filter(e => e.office === officeName).length;
+      let msg = `[${officeName}] 사업소를 삭제하시겠습니까?`;
+      if (count > 0) {
+        msg = `[${officeName}] 사업소에 등록된 설비 데이터가 총 ${count}건 있습니다.\n사업소를 삭제하면 소속 설비 데이터도 함께 삭제됩니다.\n정말 삭제하시겠습니까?`;
+      }
+
+      if (!confirm(msg)) return;
+
+      officeList = officeList.filter(o => o.name !== officeName);
+      if (count > 0) {
+        equipmentData = equipmentData.filter(e => e.office !== officeName);
+      }
+
+      if (currentOffice === officeName) {
+        currentOffice = 'ALL';
+      }
+
+      saveToLocalStorage();
+      renderOfficeTabs();
+      updateDashboard();
+    }
+
     function ensureOfficeRegistered(officeName) {
       if (!officeName || officeName === 'ALL') return;
+      if (/^\d{4,5}$/.test(officeName)) return;
+
       if (!officeList.some(o => o.name === officeName)) {
         officeList.push({
           name: officeName,
           icon: 'fa-industry',
           color: 'text-indigo-400'
         });
+        saveToLocalStorage();
         renderOfficeTabs();
       }
     }
 
-    // ISO Evaluation Helper Function
     function calculateIsoGrade(powerKw, rmsValue, foundation = 'rigid') {
       let group = 'G2';
       if (powerKw > 300) group = 'G1';
@@ -1161,9 +1617,9 @@ dashboard_html = r"""<!DOCTYPE html>
 
       document.querySelectorAll('.office-tab').forEach(tab => {
         if (tab.dataset.office === officeName) {
-          tab.className = 'office-tab px-3 py-1.5 rounded-lg text-xs font-bold transition bg-cyan-600 text-white shadow';
+          tab.className = 'office-tab px-3 py-1.5 rounded-lg text-xs font-bold transition shrink-0 bg-cyan-600 text-white shadow';
         } else {
-          tab.className = 'office-tab px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white';
+          tab.className = 'office-tab px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white';
         }
       });
 
@@ -1455,7 +1911,10 @@ dashboard_html = r"""<!DOCTYPE html>
               <span class="${item.overallGrade === 'D' ? 'text-red-400 font-medium' : ''}">${item.action}</span>
             </td>
             <td class="py-3 px-3 text-center">
-              <div class="flex items-center justify-center gap-1.5">
+              <div class="flex items-center justify-center gap-1">
+                <button onclick="openEditModal('${item.id}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 text-[11px] font-medium border border-slate-700 transition" title="수정">
+                  수정
+                </button>
                 <button onclick="viewEquipmentDetail('${item.id}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-400 text-[11px] font-medium border border-slate-700 transition" title="상세보기">
                   상세
                 </button>
@@ -1467,6 +1926,193 @@ dashboard_html = r"""<!DOCTYPE html>
           </tr>
         `;
       }).join('');
+    }
+
+    function openEditModal(id) {
+      const item = equipmentData.find(e => e.id === id);
+      if (!item) return;
+
+      const officeSelect = document.getElementById('edit_office');
+      const periodSelect = document.getElementById('edit_period');
+
+      let offOpts = '';
+      officeList.forEach(o => {
+        offOpts += `<option value="${o.name}" ${o.name === item.office ? 'selected' : ''}>${o.name}</option>`;
+      });
+      officeSelect.innerHTML = offOpts;
+
+      let perOpts = '';
+      periodList.forEach(p => {
+        perOpts += `<option value="${p}" ${p === (item.period || currentPeriod) ? 'selected' : ''}>${p}</option>`;
+      });
+      periodSelect.innerHTML = perOpts;
+
+      document.getElementById('edit_id').value = item.id;
+      document.getElementById('edit_name').value = item.name || '';
+      document.getElementById('edit_power').value = item.power || 55;
+      document.getElementById('edit_foundation').value = item.foundation || 'rigid';
+
+      const pts = item.points || {
+        m_de: { h: item.maxRms || 0, v: 0, a: 0 },
+        m_nde: { h: 0, v: 0, a: 0 },
+        p_de: { h: item.maxRms || 0, v: 0, a: 0 },
+        p_nde: { h: 0, v: 0, a: 0 }
+      };
+
+      document.getElementById('edit_m_de_h').value = pts.m_de.h;
+      document.getElementById('edit_m_de_v').value = pts.m_de.v;
+      document.getElementById('edit_m_de_a').value = pts.m_de.a;
+
+      document.getElementById('edit_m_nde_h').value = pts.m_nde.h;
+      document.getElementById('edit_m_nde_v').value = pts.m_nde.v;
+      document.getElementById('edit_m_nde_a').value = pts.m_nde.a;
+
+      document.getElementById('edit_p_de_h').value = pts.p_de.h;
+      document.getElementById('edit_p_de_v').value = pts.p_de.v;
+      document.getElementById('edit_p_de_a').value = pts.p_de.a;
+
+      document.getElementById('edit_p_nde_h').value = pts.p_nde.h;
+      document.getElementById('edit_p_nde_v').value = pts.p_nde.v;
+      document.getElementById('edit_p_nde_a').value = pts.p_nde.a;
+
+      document.getElementById('edit_summary').value = item.summary || '';
+      document.getElementById('edit_action').value = item.action || '';
+
+      autoCalcEditGrade();
+      document.getElementById('editModal').classList.remove('hidden');
+    }
+
+    function closeEditModal() {
+      document.getElementById('editModal').classList.add('hidden');
+    }
+
+    function autoCalcEditGrade() {
+      const power = parseFloat(document.getElementById('edit_power').value) || 0;
+      const foundation = document.getElementById('edit_foundation').value;
+
+      const m_de_h = parseFloat(document.getElementById('edit_m_de_h').value) || 0;
+      const m_de_v = parseFloat(document.getElementById('edit_m_de_v').value) || 0;
+      const m_de_a = parseFloat(document.getElementById('edit_m_de_a').value) || 0;
+      const m_nde_h = parseFloat(document.getElementById('edit_m_nde_h').value) || 0;
+      const m_nde_v = parseFloat(document.getElementById('edit_m_nde_v').value) || 0;
+      const m_nde_a = parseFloat(document.getElementById('edit_m_nde_a').value) || 0;
+
+      const p_de_h = parseFloat(document.getElementById('edit_p_de_h').value) || 0;
+      const p_de_v = parseFloat(document.getElementById('edit_p_de_v').value) || 0;
+      const p_de_a = parseFloat(document.getElementById('edit_p_de_a').value) || 0;
+      const p_nde_h = parseFloat(document.getElementById('edit_p_nde_h').value) || 0;
+      const p_nde_v = parseFloat(document.getElementById('edit_p_nde_v').value) || 0;
+      const p_nde_a = parseFloat(document.getElementById('edit_p_nde_a').value) || 0;
+
+      const pointMap = [
+        { name: '전동기 부하측 수평(X)', val: m_de_h },
+        { name: '전동기 부하측 수직(Y)', val: m_de_v },
+        { name: '전동기 부하측 축방향(Z)', val: m_de_a },
+        { name: '전동기 반부하측 수평(X)', val: m_nde_h },
+        { name: '전동기 반부하측 수직(Y)', val: m_nde_v },
+        { name: '전동기 반부하측 축방향(Z)', val: m_nde_a },
+        { name: '펌프 부하측 수평(X)', val: p_de_h },
+        { name: '펌프 부하측 수직(Y)', val: p_de_v },
+        { name: '펌프 부하측 축방향(Z)', val: p_de_a },
+        { name: '펌프 반부하측 수평(X)', val: p_nde_h },
+        { name: '펌프 반부하측 수직(Y)', val: p_nde_v },
+        { name: '펌프 반부하측 축방향(Z)', val: p_nde_a }
+      ];
+
+      pointMap.sort((a, b) => b.val - a.val);
+      const topPoint = pointMap[0];
+      const maxRms = topPoint.val;
+
+      const res = calculateIsoGrade(power, maxRms, foundation);
+      const badge = document.getElementById('editEvalBadge');
+      const groupText = document.getElementById('editEvalGroupText');
+      const critText = document.getElementById('editEvalCriteriaText');
+      const pointText = document.getElementById('editEvalMaxPointText');
+
+      groupText.innerText = `ISO 분류: ${res.group} (${power > 300 ? '>300kW' : (power < 15 ? '<15kW' : '15~300kW')}) | 기초: ${foundation === 'rigid' ? '강성(Rigid)' : '탄성(Flexible)'}`;
+
+      if (res.group === 'G1') {
+        critText.innerText = foundation === 'rigid' ? '기준치: A/B ≤ 4.5 | C ≤ 7.1 | D > 7.1' : '기준치: A/B ≤ 7.1 | C ≤ 11.0 | D > 11.0';
+      } else {
+        critText.innerText = foundation === 'rigid' ? '기준치: A/B ≤ 2.8 | C ≤ 4.5 | D > 4.5' : '기준치: A/B ≤ 4.5 | C ≤ 7.1 | D > 7.1';
+      }
+
+      pointText.innerText = `최대 진동 부위: ${topPoint.name} (${topPoint.val.toFixed(2)} mm/s)`;
+
+      badge.className = 'inline-block px-3 py-1 rounded text-xs font-black';
+      if (res.grade === 'A') {
+        badge.classList.add('grade-badge-A');
+        badge.innerText = 'A등급 (최상)';
+      } else if (res.grade === 'B') {
+        badge.classList.add('grade-badge-B');
+        badge.innerText = 'B등급 (양호)';
+      } else if (res.grade === 'C') {
+        badge.classList.add('grade-badge-C');
+        badge.innerText = 'C등급 (보수필요)';
+      } else {
+        badge.classList.add('grade-badge-D');
+        badge.innerText = 'D등급 (즉시점검)';
+      }
+    }
+
+    function handleEquipmentEditSubmit(e) {
+      e.preventDefault();
+      const id = document.getElementById('edit_id').value;
+      const item = equipmentData.find(x => x.id === id);
+      if (!item) return;
+
+      const office = document.getElementById('edit_office').value;
+      const period = document.getElementById('edit_period').value;
+      const name = document.getElementById('edit_name').value.trim();
+      const power = parseFloat(document.getElementById('edit_power').value);
+      const foundation = document.getElementById('edit_foundation').value;
+
+      const m_de_h = parseFloat(document.getElementById('edit_m_de_h').value) || 0;
+      const m_de_v = parseFloat(document.getElementById('edit_m_de_v').value) || 0;
+      const m_de_a = parseFloat(document.getElementById('edit_m_de_a').value) || 0;
+      const m_nde_h = parseFloat(document.getElementById('edit_m_nde_h').value) || 0;
+      const m_nde_v = parseFloat(document.getElementById('edit_m_nde_v').value) || 0;
+      const m_nde_a = parseFloat(document.getElementById('edit_m_nde_a').value) || 0;
+
+      const p_de_h = parseFloat(document.getElementById('edit_p_de_h').value) || 0;
+      const p_de_v = parseFloat(document.getElementById('edit_p_de_v').value) || 0;
+      const p_de_a = parseFloat(document.getElementById('edit_p_de_a').value) || 0;
+      const p_nde_h = parseFloat(document.getElementById('edit_p_nde_h').value) || 0;
+      const p_nde_v = parseFloat(document.getElementById('edit_p_nde_v').value) || 0;
+      const p_nde_a = parseFloat(document.getElementById('edit_p_nde_a').value) || 0;
+
+      const maxRms = Math.max(m_de_h, m_de_v, m_de_a, m_nde_h, m_nde_v, m_nde_a, p_de_h, p_de_v, p_de_a, p_nde_h, p_nde_v, p_nde_a);
+      const summary = document.getElementById('edit_summary').value.trim() || '측정 완료';
+      const action = document.getElementById('edit_action').value.trim() || '현 상태 유지';
+
+      const evalRes = calculateIsoGrade(power, maxRms, foundation);
+
+      item.office = office;
+      item.period = period;
+      item.name = name;
+      item.power = power;
+      item.group = evalRes.group;
+      item.foundation = foundation;
+      item.overallGrade = evalRes.grade;
+      item.maxRms = maxRms;
+      item.points = {
+        m_de:  { h: m_de_h, v: m_de_v, a: m_de_a },
+        m_nde: { h: m_nde_h, v: m_nde_v, a: m_nde_a },
+        p_de:  { h: p_de_h, v: p_de_v, a: p_de_a },
+        p_nde: { h: p_nde_h, v: p_nde_v, a: p_nde_a }
+      };
+      item.axes = {
+        motor: { h: Math.max(m_de_h, m_nde_h), v: Math.max(m_de_v, m_nde_v), a: Math.max(m_de_a, m_nde_a) },
+        pump:  { h: Math.max(p_de_h, p_nde_h), v: Math.max(p_de_v, p_nde_v), a: Math.max(p_de_a, p_nde_a) }
+      };
+      if (!item.history) item.history = {};
+      item.history[period] = maxRms;
+      item.summary = summary;
+      item.action = action;
+
+      saveToLocalStorage();
+      closeEditModal();
+      updateDashboard();
     }
 
     function autoCalcGrade() {
@@ -1607,6 +2253,7 @@ dashboard_html = r"""<!DOCTYPE html>
       };
 
       equipmentData.unshift(newEntry);
+      saveToLocalStorage();
       closeAddModal();
       document.getElementById('addEquipForm').reset();
 
@@ -1616,7 +2263,9 @@ dashboard_html = r"""<!DOCTYPE html>
     }
 
     function deleteEquipment(id) {
+      if (!confirm('해당 설비 계측 데이터를 삭제하시겠습니까?')) return;
       equipmentData = equipmentData.filter(e => e.id !== id);
+      saveToLocalStorage();
       updateDashboard();
     }
 
@@ -1651,7 +2300,6 @@ dashboard_html = r"""<!DOCTYPE html>
       document.getElementById('detailModal').classList.add('hidden');
     }
 
-    // View Equipment Detail Modal
     function viewEquipmentDetail(id) {
       const item = equipmentData.find(e => e.id === id);
       if (!item) return;
@@ -1682,7 +2330,6 @@ dashboard_html = r"""<!DOCTYPE html>
           <span class="px-3 py-1 rounded text-xs font-black ${badgeClass}">${badgeLabel}</span>
         </div>
 
-        <!-- 4 Points Summary Table -->
         <div class="mt-4 p-3 bg-slate-800/80 rounded-xl border border-slate-700">
           <span class="text-xs font-bold text-slate-200 block mb-2"><i class="fa-solid fa-crosshairs text-cyan-400 mr-1.5"></i>4개 지점(DE/NDE) 12축 실측 RMS (mm/s)</span>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
@@ -1705,7 +2352,6 @@ dashboard_html = r"""<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- 3-Axis & Historical Charts -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 my-4">
           <div class="bg-slate-800/60 p-3 rounded-xl border border-slate-700">
             <span class="text-xs font-semibold text-slate-300 block mb-2"><i class="fa-solid fa-arrows-up-down-left-right text-cyan-400 mr-1.5"></i>모터 vs 펌프 방향별(H/V/A) 비교</span>
@@ -1740,7 +2386,6 @@ dashboard_html = r"""<!DOCTYPE html>
       openDetailModal();
 
       setTimeout(() => {
-        // 1. Axes Comparison Chart
         const ctxAxes = document.getElementById('detailAxesChart').getContext('2d');
         if (detailAxesChart) detailAxesChart.destroy();
         detailAxesChart = new Chart(ctxAxes, {
@@ -1781,7 +2426,6 @@ dashboard_html = r"""<!DOCTYPE html>
           }
         });
 
-        // 2. Individual Trend Chart
         const ctxTrend = document.getElementById('detailTrendChart').getContext('2d');
         if (detailChart) detailChart.destroy();
         const trendVals = periodList.map(p => (item.history && item.history[p] !== undefined) ? item.history[p] : (item.period === p ? item.maxRms : null));
@@ -1813,7 +2457,6 @@ dashboard_html = r"""<!DOCTYPE html>
       }, 50);
     }
 
-    // Interactive Calculator Logic
     function updateSliderVal(val) {
       document.getElementById('calcValDisplay').innerText = parseFloat(val).toFixed(2) + ' mm/s';
       runEvaluation();
@@ -1855,7 +2498,7 @@ dashboard_html = r"""<!DOCTYPE html>
         title.className = 'text-sm font-bold text-amber-400';
         title.innerText = '보수 필요 (주의 단계)';
         box.className = 'mt-4 p-4 rounded-xl border transition-all duration-300 bg-amber-950/20 border-amber-500/40';
-        rec.innerText = '단기간 운전은 가능하나 결함이 진행 중입니다. 주파수 분석(축정렬/베어링) 및 차기 정비 시 부품 교체를 권고합니다.';
+        rec.innerText = '단기간 운전은 가능하나 결함 진행 중입니다. 주파수 분석(FFT)을 통한 원인 규명 및 차기 정비 시 부품 교체를 권고합니다.';
       } else {
         badge.classList.add('grade-badge-D');
         badge.innerText = 'Grade D';
@@ -1872,7 +2515,6 @@ dashboard_html = r"""<!DOCTYPE html>
       }
     }
 
-    // Excel & CSV File Upload Processing with '진동측정결과' Sheet Auto Detection
     function handleFileSelect(e) {
       const file = e.target.files[0];
       if (!file) return;
@@ -2035,6 +2677,7 @@ dashboard_html = r"""<!DOCTYPE html>
           }
 
           currentPeriod = targetPeriod;
+          saveToLocalStorage();
           renderPeriodSelectors();
 
           statusBox.className = 'p-3 rounded-lg border text-xs bg-emerald-950/20 border-emerald-500/40 text-emerald-400 font-medium';
@@ -2053,7 +2696,6 @@ dashboard_html = r"""<!DOCTYPE html>
       reader.readAsArrayBuffer(file);
     }
 
-    // Download Sample Excel Template Matching '진동측정결과' Sheet (4 Points 12 Axes)
     function downloadSampleTemplate() {
       const templateData = [
         [
@@ -2096,7 +2738,6 @@ dashboard_html = r"""<!DOCTYPE html>
       XLSX.writeFile(wb, "회전설비_진동측정결과_표준양식.xlsx");
     }
 
-    // Export Currently Displayed List to CSV with 4 Points
     function exportToCSV() {
       const activeData = equipmentData.filter(e => {
         const officeMatch = (currentOffice === 'ALL' || e.office === currentOffice);
@@ -2135,7 +2776,6 @@ dashboard_html = r"""<!DOCTYPE html>
       XLSX.writeFile(wb, `회전설비_진동진단결과_${currentOffice}_${currentPeriod}.xlsx`);
     }
 
-    // Drag and Drop Handlers
     const dropZone = document.getElementById('dropZone');
     ['dragenter', 'dragover'].forEach(eventName => {
       dropZone.addEventListener(eventName, (e) => {
@@ -2155,11 +2795,16 @@ dashboard_html = r"""<!DOCTYPE html>
       if (files.length) processDataFile(files[0]);
     });
 
-    // Initial Dashboard Boot
     window.onload = function() {
+      loadFromLocalStorage();
       renderPeriodSelectors();
       renderOfficeTabs();
       updateDashboard();
+      updateSyncBadge();
+
+      if (googleSheetAppUrl) {
+        syncFromGoogleSheets();
+      }
     };
   </script>
 </body>
