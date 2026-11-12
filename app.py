@@ -116,9 +116,9 @@ dashboard_html = r"""<!DOCTYPE html>
           <span>구글시트 연동</span>
         </button>
         <!-- Add Period Button -->
-        <button onclick="openAddPeriodModal()" class="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs sm:text-sm font-medium py-2 px-3 rounded-lg border border-slate-700 transition duration-200 shadow">
-          <i class="fa-regular fa-calendar-plus text-cyan-400"></i>
-          <span>측정주기 추가</span>
+        <button onclick="openManagePeriodModal()" class="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs sm:text-sm font-medium py-2 px-3 rounded-lg border border-slate-700 transition duration-200 shadow">
+          <i class="fa-regular fa-calendar-days text-cyan-400"></i>
+          <span>측정시기 관리</span>
         </button>
         <!-- Manage Office Button -->
         <button onclick="openAddOfficeModal()" class="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-medium py-2 px-3 rounded-lg transition duration-200 shadow">
@@ -773,34 +773,43 @@ dashboard_html = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- MODAL 3: Add Period Modal -->
-  <div id="addPeriodModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
-    <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-sm rounded-2xl shadow-2xl p-6 relative">
-      <button onclick="closeAddPeriodModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white transition">
+  <!-- MODAL 3: Manage Period Modal -->
+  <div id="managePeriodModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-md rounded-2xl shadow-2xl p-6 relative max-h-[92vh] overflow-y-auto custom-scrollbar">
+      <button onclick="closeManagePeriodModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white transition">
         <i class="fa-solid fa-xmark text-lg"></i>
       </button>
 
-      <div class="flex items-center gap-3 mb-4 border-b border-slate-700 pb-3">
+      <div class="flex items-center gap-3 mb-5 border-b border-slate-700 pb-3">
         <div class="h-10 w-10 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 flex items-center justify-center text-lg">
-          <i class="fa-regular fa-calendar-plus"></i>
+          <i class="fa-regular fa-calendar-days"></i>
         </div>
         <div>
-          <h3 class="text-base font-bold text-white">신규 측정시기 추가</h3>
-          <p class="text-xs text-slate-400">반기별 점검 주기를 등록합니다.</p>
+          <h3 class="text-base font-bold text-white">측정시기(점검주기) 관리</h3>
+          <p class="text-xs text-slate-400">새로운 반기/주기를 추가하거나 잘못 등록된 주기를 일괄 삭제합니다.</p>
         </div>
       </div>
 
-      <form id="addPeriodForm" onsubmit="handlePeriodSubmit(event)" class="space-y-4 text-xs">
-        <div>
-          <label class="block text-slate-300 font-medium mb-1">측정 시기 명칭 <span class="text-rose-400">*</span></label>
-          <input type="text" id="inpNewPeriodName" required placeholder="예: 2027년 상반기" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 font-bold">
-        </div>
-
-        <div class="pt-3 border-t border-slate-700 flex justify-end gap-2">
-          <button type="button" onclick="closeAddPeriodModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-medium transition">취소</button>
-          <button type="submit" class="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg transition shadow-md">주기 등록</button>
+      <!-- Add Period Form -->
+      <form id="addPeriodForm" onsubmit="handlePeriodSubmit(event)" class="space-y-3 text-xs pb-4 border-b border-slate-700/80">
+        <span class="font-bold text-slate-200 block"><i class="fa-solid fa-plus text-cyan-400 mr-1"></i>새 주기 등록</span>
+        <div class="flex gap-2">
+          <input type="text" id="inpNewPeriodName" required placeholder="예: 2027년 상반기" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 font-bold">
+          <button type="submit" class="px-4 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg transition shadow-md whitespace-nowrap">추가</button>
         </div>
       </form>
+
+      <!-- Period List & Delete Area -->
+      <div class="pt-4 text-xs space-y-2">
+        <span class="font-bold text-slate-200 block"><i class="fa-solid fa-list text-emerald-400 mr-1"></i>등록된 측정시기 목록 (삭제 관리)</span>
+        <div id="periodManageList" class="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <div class="pt-4 mt-4 border-t border-slate-700 flex justify-end">
+        <button type="button" onclick="closeManagePeriodModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-medium transition text-xs">닫기</button>
+      </div>
     </div>
   </div>
 
@@ -1028,7 +1037,7 @@ dashboard_html = r"""<!DOCTYPE html>
   <!-- JavaScript Application Logic with LocalStorage & Google Sheets Sync -->
   <script>
     let googleSheetAppUrl = localStorage.getItem('becovib_google_sheet_url') || '';
-    let periodList = ['2025년 상반기', '2025년 하반기', '2026년 상반기', '2026년 하반기'];
+    let periodList = ['2026년 상반기', '2026년 하반기', '2027년 상반기'];
     let currentPeriod = '2026년 상반기';
 
     const defaultEquipmentData = [
@@ -1415,12 +1424,41 @@ dashboard_html = r"""<!DOCTYPE html>
       updateDashboard();
     }
 
-    function openAddPeriodModal() {
-      document.getElementById('addPeriodModal').classList.remove('hidden');
+    function openManagePeriodModal() {
+      document.getElementById('managePeriodModal').classList.remove('hidden');
+      renderPeriodManageList();
       document.getElementById('inpNewPeriodName').focus();
     }
-    function closeAddPeriodModal() {
-      document.getElementById('addPeriodModal').classList.add('hidden');
+    
+    function closeManagePeriodModal() {
+      document.getElementById('managePeriodModal').classList.add('hidden');
+    }
+
+    function renderPeriodManageList() {
+      const listContainer = document.getElementById('periodManageList');
+      if (!listContainer) return;
+
+      if (periodList.length === 0) {
+        listContainer.innerHTML = '<p class="text-slate-500 py-2 text-center">등록된 주기가 없습니다.</p>';
+        return;
+      }
+
+      listContainer.innerHTML = periodList.map(p => {
+        const count = equipmentData.filter(e => e.period === p).length;
+        return `
+          <div class="flex items-center justify-between p-2 rounded-lg bg-slate-800/80 border border-slate-700">
+            <div class="flex items-center gap-2">
+              <i class="fa-regular fa-calendar text-cyan-400"></i>
+              <span class="font-bold text-slate-200">${p}</span>
+              <span class="text-[10px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-700">데이터 ${count}건</span>
+            </div>
+            <button type="button" onclick="deletePeriod('${p}')" class="px-2 py-1 rounded bg-rose-950/40 hover:bg-rose-900/80 text-rose-300 hover:text-white border border-rose-800/50 text-[11px] transition flex items-center gap-1">
+              <i class="fa-solid fa-trash-can"></i>
+              <span>삭제</span>
+            </button>
+          </div>
+        `;
+      }).join('');
     }
 
     function handlePeriodSubmit(e) {
@@ -1434,8 +1472,41 @@ dashboard_html = r"""<!DOCTYPE html>
       currentPeriod = newP;
       saveToLocalStorage();
       renderPeriodSelectors();
+      renderPeriodManageList();
       document.getElementById('addPeriodForm').reset();
-      closeAddPeriodModal();
+      updateDashboard();
+    }
+
+    function deletePeriod(periodName) {
+      const count = equipmentData.filter(e => e.period === periodName).length;
+      let msg = `[${periodName}] 측정 시기를 목록에서 삭제하시겠습니까?`;
+      if (count > 0) {
+        msg = `[${periodName}] 시기에 등록된 설비 데이터가 총 ${count}건 있습니다.\n해당 시기를 삭제하면 관련된 실측 데이터가 모두 함께 삭제됩니다.\n정말 삭제하시겠습니까?`;
+      }
+
+      if (!confirm(msg)) return;
+
+      periodList = periodList.filter(p => p !== periodName);
+      
+      // 해당 시기에 종속된 데이터 완전히 제거
+      if (count > 0) {
+        equipmentData = equipmentData.filter(e => e.period !== periodName);
+      }
+      
+      // 다른 데이터의 히스토리 찌꺼기 제거
+      equipmentData.forEach(e => {
+        if (e.history && e.history[periodName] !== undefined) {
+          delete e.history[periodName];
+        }
+      });
+
+      if (currentPeriod === periodName) {
+        currentPeriod = periodList.length > 0 ? periodList[0] : '';
+      }
+
+      saveToLocalStorage();
+      renderPeriodSelectors();
+      renderPeriodManageList();
       updateDashboard();
     }
 
