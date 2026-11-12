@@ -164,8 +164,8 @@ dashboard_html = r"""<!DOCTYPE html>
           <span>내보내기</span>
         </button>
 
-        <button onclick="resetToInitialData()" class="bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 px-2 py-1 rounded border border-slate-700 transition text-[11px]" title="저장된 데이터 초기화">
-          <i class="fa-solid fa-arrow-rotate-left mr-1"></i>초기화
+        <button id="btnResetPeriod" onclick="resetCurrentSelectionData()" class="bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 px-2.5 py-1 rounded border border-slate-700 transition text-[11px] font-semibold" title="현재 선택된 사업소 및 측정시기의 설비 데이터를 0으로 비웁니다">
+          <i class="fa-solid fa-eraser mr-1"></i>현재 시기 비우기(0)
         </button>
       </div>
     </div>
@@ -233,10 +233,10 @@ dashboard_html = r"""<!DOCTYPE html>
           <i class="fa-solid fa-wrench text-slate-400"></i>
         </div>
         <div class="flex items-baseline gap-2">
-          <span id="metric-stop" class="text-2xl sm:text-3xl font-extrabold text-slate-300">5</span>
+          <span id="metric-stop" class="text-2xl sm:text-3xl font-extrabold text-slate-300">0</span>
           <span class="text-xs text-slate-400">대</span>
         </div>
-        <p class="text-[11px] text-slate-400 mt-2">급수 #5·#6, 순환 #1·#2·#3</p>
+        <p id="metric-stop-desc" class="text-[11px] text-slate-400 mt-2 truncate">미측정 및 정비 대기 설비</p>
       </div>
     </section>
 
@@ -1037,161 +1037,11 @@ dashboard_html = r"""<!DOCTYPE html>
   <!-- JavaScript Application Logic with LocalStorage & Google Sheets Sync -->
   <script>
     let googleSheetAppUrl = localStorage.getItem('becovib_google_sheet_url') || '';
-    let periodList = ['2026년 상반기', '2026년 하반기', '2027년 상반기'];
+    let periodList = ['2026년 상반기', '2026년 하반기'];
     let currentPeriod = '2026년 상반기';
 
-    const defaultEquipmentData = [
-      {
-        id: 'fd_fan',
-        office: '에너지사업소',
-        period: '2026년 상반기',
-        name: '강제송풍기 (FD Fan)',
-        power: 310,
-        group: 'G1',
-        foundation: 'rigid',
-        totalQty: 4,
-        unoperated: '-',
-        normalList: '#2, #3',
-        warningList: '-',
-        dangerList: '#1, #4',
-        overallGrade: 'D',
-        maxRms: 7.3,
-        points: {
-          m_de:  { h: 6.8, v: 4.1, a: 3.5 },
-          m_nde: { h: 3.2, v: 2.1, a: 1.8 },
-          p_de:  { h: 7.3, v: 5.2, a: 4.8 },
-          p_nde: { h: 4.5, v: 3.1, a: 2.6 }
-        },
-        axes: {
-          motor: { h: 6.8, v: 4.1, a: 3.5 },
-          pump:  { h: 7.3, v: 5.2, a: 4.8 }
-        },
-        history: { '2025년 상반기': 3.8, '2025년 하반기': 4.9, '2026년 상반기': 7.3, '2026년 하반기': null },
-        summary: '#1 : 전동기 진동, #4 : 송풍기 부하측 수평진동(7.3) 심각',
-        action: '#1, #4 전동기 및 팬 베어링 분해정비 요망',
-        detailNotes: '송풍기 부하측(P-DE) 수평(X축) 진동이 7.3mm/s로 D등급 임계치 초과.'
-      },
-      {
-        id: 'boiler_feed',
-        office: '에너지사업소',
-        period: '2026년 상반기',
-        name: '보일러 급수펌프',
-        power: 95,
-        group: 'G2',
-        foundation: 'rigid',
-        totalQty: 6,
-        unoperated: '#5, #6',
-        normalList: '#1',
-        warningList: '#2, #3, #4',
-        dangerList: '-',
-        overallGrade: 'C',
-        maxRms: 3.9,
-        points: {
-          m_de:  { h: 3.4, v: 2.1, a: 1.8 },
-          m_nde: { h: 1.8, v: 1.2, a: 1.0 },
-          p_de:  { h: 3.9, v: 2.8, a: 2.2 },
-          p_nde: { h: 2.5, v: 1.9, a: 1.5 }
-        },
-        axes: {
-          motor: { h: 3.4, v: 2.1, a: 1.8 },
-          pump:  { h: 3.9, v: 2.8, a: 2.2 }
-        },
-        history: { '2025년 상반기': 2.1, '2025년 하반기': 2.7, '2026년 상반기': 3.9, '2026년 하반기': null },
-        summary: '#2 : 전동기/펌프 진동, #3·#4 : 펌프 부하측 베어링 진동',
-        action: '#2, #3, #4 호기 하절기 정비 시 베어링 및 축정렬 보수',
-        detailNotes: '펌프 부하측 수평(X축) 3.9mm/s로 C등급(주의). 커플링 엘레먼트 마모 및 축정렬 불량 추정.'
-      },
-      {
-        id: 'hot_water_circ',
-        office: '에너지사업소',
-        period: '2026년 상반기',
-        name: '중온수 순환펌프',
-        power: 350,
-        group: 'G1',
-        foundation: 'rigid',
-        totalQty: 6,
-        unoperated: '#1, #2, #3',
-        normalList: '#5, #6',
-        warningList: '#4',
-        dangerList: '-',
-        overallGrade: 'B',
-        maxRms: 3.2,
-        points: {
-          m_de:  { h: 3.2, v: 2.0, a: 1.9 },
-          m_nde: { h: 1.9, v: 1.3, a: 1.1 },
-          p_de:  { h: 2.6, v: 1.8, a: 1.7 },
-          p_nde: { h: 2.1, v: 1.5, a: 1.2 }
-        },
-        axes: {
-          motor: { h: 3.2, v: 2.0, a: 1.9 },
-          pump:  { h: 2.6, v: 1.8, a: 1.7 }
-        },
-        history: { '2025년 상반기': 2.8, '2025년 하반기': 3.0, '2026년 상반기': 3.2, '2026년 하반기': null },
-        summary: '#3 : 액츄에이터 제작 중, #4 : 전동기 부하측 진동 및 이음',
-        action: '#3호기 밸브 제작 완료 후 교체, #4호기 향후 보수',
-        detailNotes: '모터 부하측 수평방향 3.2mm/s로 B등급(양호 상한선).'
-      },
-      {
-        id: 'incin_pump',
-        office: '에너지사업소',
-        period: '2026년 상반기',
-        name: '소각장 순환펌프',
-        power: 95,
-        group: 'G2',
-        foundation: 'rigid',
-        totalQty: 3,
-        unoperated: '-',
-        normalList: '-',
-        warningList: '#9',
-        dangerList: '#7, #8',
-        overallGrade: 'D',
-        maxRms: 6.2,
-        points: {
-          m_de:  { h: 5.8, v: 3.9, a: 3.1 },
-          m_nde: { h: 2.9, v: 2.1, a: 1.7 },
-          p_de:  { h: 6.2, v: 4.4, a: 3.8 },
-          p_nde: { h: 3.7, v: 2.5, a: 2.1 }
-        },
-        axes: {
-          motor: { h: 5.8, v: 3.9, a: 3.1 },
-          pump:  { h: 6.2, v: 4.4, a: 3.8 }
-        },
-        history: { '2025년 상반기': 3.2, '2025년 하반기': 4.4, '2026년 상반기': 6.2, '2026년 하반기': null },
-        summary: '#7, #8 : 전동기/펌프 부하측 진동 심각, #9 : M/Seal 미세누수',
-        action: '#7, #8호기 즉시 분해 점검, #9호기 씰 교체',
-        detailNotes: '부하측 모터(5.8) 및 펌프(6.2) 모두 D등급 초과. 베어링 소착 위험.'
-      },
-      {
-        id: 'heat_pump',
-        office: '에너지사업소',
-        period: '2026년 상반기',
-        name: '히트펌프 1·2호기 (저온/고온열)',
-        power: 55,
-        group: 'G2',
-        foundation: 'rigid',
-        totalQty: 10,
-        unoperated: '-',
-        normalList: '-',
-        warningList: '-',
-        dangerList: '저온(#1,#2) / 고온(#1~#3)',
-        overallGrade: 'D',
-        maxRms: 7.4,
-        points: {
-          m_de:  { h: 5.2, v: 3.8, a: 4.1 },
-          m_nde: { h: 2.6, v: 1.9, a: 1.8 },
-          p_de:  { h: 6.9, v: 4.9, a: 7.4 },
-          p_nde: { h: 3.4, v: 2.7, a: 2.9 }
-        },
-        axes: {
-          motor: { h: 5.2, v: 3.8, a: 4.1 },
-          pump:  { h: 6.9, v: 4.9, a: 7.4 }
-        },
-        history: { '2025년 상반기': 3.5, '2025년 하반기': 5.2, '2026년 상반기': 7.4, '2026년 하반기': null },
-        summary: '저온열 : 메카니칼 씰 누수, 고온열 : 펌프 부하측 축방향(Z축: 7.4) 진동 과다',
-        action: '저온열 즉시보수 실시, 고온열 베어링 순차적 분해정비',
-        detailNotes: '고온열 펌프 부하측 축방향(Z축) 진동이 7.4mm/s로 D등급 임계치 초과.'
-      }
-    ];
+    // 초기 샘플 데이터를 빈 배열(0대)로 설정하여 업로드 시 대수 혼선 원천 방지
+    const defaultEquipmentData = [];
 
     let equipmentData = [];
 
@@ -1355,8 +1205,14 @@ dashboard_html = r"""<!DOCTYPE html>
         const savedPeriods = localStorage.getItem('becovib_period_list');
         const savedCurPeriod = localStorage.getItem('becovib_current_period');
 
-        if (savedEquip) equipmentData = JSON.parse(savedEquip);
-        else equipmentData = JSON.parse(JSON.stringify(defaultEquipmentData));
+        if (savedEquip) {
+          // 기존에 들어있던 고정 샘플 ID(fd_fan 등) 자동 제거
+          const parsed = JSON.parse(savedEquip);
+          const sampleIds = ['fd_fan', 'boiler_feed', 'hot_water_circ', 'incin_pump', 'heat_pump'];
+          equipmentData = parsed.filter(item => !sampleIds.includes(item.id));
+        } else {
+          equipmentData = [];
+        }
 
         if (savedOffices) officeList = JSON.parse(savedOffices);
         else officeList = JSON.parse(JSON.stringify(defaultOfficeList));
@@ -1366,22 +1222,41 @@ dashboard_html = r"""<!DOCTYPE html>
 
       } catch (err) {
         console.warn('LocalStorage load failed, using defaults:', err);
-        equipmentData = JSON.parse(JSON.stringify(defaultEquipmentData));
+        equipmentData = [];
         officeList = JSON.parse(JSON.stringify(defaultOfficeList));
       }
     }
 
-    function resetToInitialData() {
-      if (confirm('저장된 설비 및 사업소 데이터를 최초 기본값으로 초기화하시겠습니까?')) {
-        localStorage.removeItem('becovib_equipment_data');
-        localStorage.removeItem('becovib_office_list');
-        localStorage.removeItem('becovib_period_list');
-        localStorage.removeItem('becovib_current_period');
-        loadFromLocalStorage();
-        renderPeriodSelectors();
-        renderOfficeTabs();
-        updateDashboard();
+    let resetConfirmTimer = null;
+    function resetCurrentSelectionData() {
+      const btn = document.getElementById('btnResetPeriod');
+      if (btn.dataset.confirming !== 'true') {
+        btn.dataset.confirming = 'true';
+        btn.className = 'bg-rose-700 text-white px-2.5 py-1 rounded border border-rose-500 transition text-[11px] font-bold animate-pulse';
+        btn.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>한 번 더 누르면 [${currentPeriod}] 0대로 초기화`;
+        if (resetConfirmTimer) clearTimeout(resetConfirmTimer);
+        resetConfirmTimer = setTimeout(() => {
+          btn.dataset.confirming = 'false';
+          btn.className = 'bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 px-2.5 py-1 rounded border border-slate-700 transition text-[11px] font-semibold';
+          btn.innerHTML = '<i class="fa-solid fa-eraser mr-1"></i>현재 시기 비우기(0)';
+        }, 3500);
+        return;
       }
+
+      btn.dataset.confirming = 'false';
+      if (resetConfirmTimer) clearTimeout(resetConfirmTimer);
+      btn.className = 'bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 px-2.5 py-1 rounded border border-slate-700 transition text-[11px] font-semibold';
+      btn.innerHTML = '<i class="fa-solid fa-eraser mr-1"></i>현재 시기 비우기(0)';
+
+      // 현재 선택된 사업소 및 측정시기에 해당하는 설비를 모두 비움 (0대 처리)
+      equipmentData = equipmentData.filter(e => {
+        const matchOffice = (currentOffice === 'ALL' || e.office === currentOffice);
+        const matchPeriod = (!e.period || e.period === currentPeriod);
+        return !(matchOffice && matchPeriod);
+      });
+
+      saveToLocalStorage();
+      updateDashboard();
     }
 
     let currentOffice = 'ALL';
@@ -1478,22 +1353,9 @@ dashboard_html = r"""<!DOCTYPE html>
     }
 
     function deletePeriod(periodName) {
-      const count = equipmentData.filter(e => e.period === periodName).length;
-      let msg = `[${periodName}] 측정 시기를 목록에서 삭제하시겠습니까?`;
-      if (count > 0) {
-        msg = `[${periodName}] 시기에 등록된 설비 데이터가 총 ${count}건 있습니다.\n해당 시기를 삭제하면 관련된 실측 데이터가 모두 함께 삭제됩니다.\n정말 삭제하시겠습니까?`;
-      }
-
-      if (!confirm(msg)) return;
-
       periodList = periodList.filter(p => p !== periodName);
+      equipmentData = equipmentData.filter(e => e.period !== periodName);
       
-      // 해당 시기에 종속된 데이터 완전히 제거
-      if (count > 0) {
-        equipmentData = equipmentData.filter(e => e.period !== periodName);
-      }
-      
-      // 다른 데이터의 히스토리 찌꺼기 제거
       equipmentData.forEach(e => {
         if (e.history && e.history[periodName] !== undefined) {
           delete e.history[periodName];
@@ -1501,7 +1363,7 @@ dashboard_html = r"""<!DOCTYPE html>
       });
 
       if (currentPeriod === periodName) {
-        currentPeriod = periodList.length > 0 ? periodList[0] : '';
+        currentPeriod = periodList.length > 0 ? periodList[0] : '2026년 상반기';
       }
 
       saveToLocalStorage();
@@ -1597,11 +1459,7 @@ dashboard_html = r"""<!DOCTYPE html>
       const icon = document.querySelector('input[name="officeIcon"]:checked').value;
 
       if (!name) return;
-
-      if (officeList.some(o => o.name === name)) {
-        alert('이미 등록되어 있는 사업소 명칭입니다.');
-        return;
-      }
+      if (officeList.some(o => o.name === name)) return;
 
       let color = 'text-cyan-400';
       if (icon === 'fa-fire-flame-curved') color = 'text-amber-400';
@@ -1618,18 +1476,8 @@ dashboard_html = r"""<!DOCTYPE html>
     function deleteOffice(officeName, evt) {
       if (evt) evt.stopPropagation();
 
-      const count = equipmentData.filter(e => e.office === officeName).length;
-      let msg = `[${officeName}] 사업소를 삭제하시겠습니까?`;
-      if (count > 0) {
-        msg = `[${officeName}] 사업소에 등록된 설비 데이터가 총 ${count}건 있습니다.\n사업소를 삭제하면 소속 설비 데이터도 함께 삭제됩니다.\n정말 삭제하시겠습니까?`;
-      }
-
-      if (!confirm(msg)) return;
-
       officeList = officeList.filter(o => o.name !== officeName);
-      if (count > 0) {
-        equipmentData = equipmentData.filter(e => e.office !== officeName);
-      }
+      equipmentData = equipmentData.filter(e => e.office !== officeName);
 
       if (currentOffice === officeName) {
         currentOffice = 'ALL';
@@ -1741,18 +1589,25 @@ dashboard_html = r"""<!DOCTYPE html>
         return officeMatch && periodMatch;
       });
 
-      const totalUnits = activeData.reduce((acc, cur) => acc + (cur.totalQty || 1), 0);
-      const gradeA = activeData.filter(e => e.overallGrade === 'A').length;
-      const gradeB = activeData.filter(e => e.overallGrade === 'B').length;
-      const gradeC = activeData.filter(e => e.overallGrade === 'C').length;
-      const gradeD = activeData.filter(e => e.overallGrade === 'D').length;
+      const totalUnits = activeData.length;
+      const stopUnits = activeData.filter(e => (parseFloat(e.maxRms) || 0) === 0).length;
+      const operatedData = activeData.filter(e => (parseFloat(e.maxRms) || 0) > 0);
+
+      const gradeA = operatedData.filter(e => e.overallGrade === 'A').length;
+      const gradeB = operatedData.filter(e => e.overallGrade === 'B').length;
+      const gradeC = operatedData.filter(e => e.overallGrade === 'C').length;
+      const gradeD = operatedData.filter(e => e.overallGrade === 'D').length;
 
       document.getElementById('metric-total').innerText = totalUnits;
       document.getElementById('metric-ab').innerText = (gradeA + gradeB);
       document.getElementById('metric-c').innerText = gradeC;
       document.getElementById('metric-d').innerText = gradeD;
+      document.getElementById('metric-stop').innerText = stopUnits;
 
-      const pct = activeData.length > 0 ? Math.round(((gradeA + gradeB) / activeData.length) * 100) : 0;
+      const stopNames = activeData.filter(e => (parseFloat(e.maxRms) || 0) === 0).map(e => e.name).slice(0, 3).join(', ');
+      document.getElementById('metric-stop-desc').innerText = stopUnits > 0 ? stopNames : '미측정/정비 설비 없음';
+
+      const pct = operatedData.length > 0 ? Math.round(((gradeA + gradeB) / operatedData.length) * 100) : 0;
       document.getElementById('metric-ab-pct').innerText = pct + '%';
 
       renderTable();
@@ -2369,7 +2224,6 @@ dashboard_html = r"""<!DOCTYPE html>
     }
 
     function deleteEquipment(id) {
-      if (!confirm('해당 설비 계측 데이터를 삭제하시겠습니까?')) return;
       equipmentData = equipmentData.filter(e => e.id !== id);
       saveToLocalStorage();
       updateDashboard();
@@ -2630,8 +2484,9 @@ dashboard_html = r"""<!DOCTYPE html>
     function processDataFile(file) {
       const statusBox = document.getElementById('uploadStatusBox');
       const targetPeriod = document.getElementById('uploadPeriodSelect').value;
+      const uploadOffice = currentOffice === 'ALL' ? '에너지사업소' : currentOffice;
       statusBox.classList.remove('hidden');
-      statusBox.innerHTML = `<span class="text-cyan-400 font-semibold"><i class="fa-solid fa-spinner fa-spin mr-1"></i>다중 시트 스마트 AI 파싱 중: ${file.name}</span>`;
+      statusBox.innerHTML = `<span class="text-cyan-400 font-semibold"><i class="fa-solid fa-spinner fa-spin mr-1"></i>다중 시트 정밀 파싱 중: ${file.name}</span>`;
 
       const reader = new FileReader();
 
@@ -2640,25 +2495,26 @@ dashboard_html = r"""<!DOCTYPE html>
           const data = new Uint8Array(e.target.result);
           const workbook = XLSX.read(data, { type: 'array' });
           
-          let parsedList = [];
-          let currentOffice = '에너지사업소'; 
+          let parsedBySheet = {}; 
           
-          // 1. 모든 시트 순회 (상/하반기 자동 분리)
+          // 1. 모든 시트 순회 (상/하반기 자동 분리 및 동일 대수 보장)
           for (let sheetName of workbook.SheetNames) {
-            // 필요 없는 시트는 건너뛰기
             if (sheetName.includes('가이드') || sheetName.includes('양식') || sheetName.includes('설명')) continue;
             
-            // 시트 이름에서 측정 시기(Period) 유추
             let sheetPeriod = targetPeriod;
-            const yearMatch = sheetName.match(/\d{4}년/);
+            const yearMatch = sheetName.match(/(\d{2,4})\s*년?/);
+            let yearStr = targetPeriod.split('년')[0] + '년';
             if (yearMatch) {
-              if (sheetName.includes('상반기')) sheetPeriod = yearMatch[0] + ' 상반기';
-              else if (sheetName.includes('하반기')) sheetPeriod = yearMatch[0] + ' 하반기';
-            } else {
-              if (sheetName.includes('상반기')) sheetPeriod = targetPeriod.split('년')[0] + '년 상반기';
-              else if (sheetName.includes('하반기')) sheetPeriod = targetPeriod.split('년')[0] + '년 하반기';
+              let y = yearMatch[1];
+              if (y.length === 2) y = '20' + y;
+              yearStr = y + '년';
             }
+
+            if (sheetName.includes('상반기')) sheetPeriod = `${yearStr} 상반기`;
+            else if (sheetName.includes('하반기')) sheetPeriod = `${yearStr} 하반기`;
+
             if (!periodList.includes(sheetPeriod)) periodList.push(sheetPeriod);
+            if (!parsedBySheet[sheetPeriod]) parsedBySheet[sheetPeriod] = [];
 
             const worksheet = workbook.Sheets[sheetName];
             const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
@@ -2666,14 +2522,12 @@ dashboard_html = r"""<!DOCTYPE html>
             let currentEquip = null;
             let isHeaderFound = false;
 
-            // 2. 세로형 다중 행 데이터 추적 및 병합
             for (let i = 0; i < jsonData.length; i++) {
               const row = jsonData[i];
-              if (!row || row.length < 5) continue; 
+              if (!row || row.length < 4) continue;
               
               const rowStr = row.join('').replace(/\s/g, '');
-              // 엑셀 표의 실제 시작점(헤더)을 찾아 그 위쪽의 쓰레기 텍스트 무시
-              if (rowStr.includes('설비명') && rowStr.includes('측정위치')) {
+              if (rowStr.includes('설비명') && (rowStr.includes('측정위치') || rowStr.includes('전동기'))) {
                 isHeaderFound = true;
                 continue;
               }
@@ -2681,38 +2535,47 @@ dashboard_html = r"""<!DOCTYPE html>
               if (!isHeaderFound) continue;
 
               let equipName = String(row[1] || '').trim();
-              
-              // 엑셀 하단의 비고란, 안내문구 등 가짜 데이터 스킵 (너무 길거나 특정 키워드 포함 시)
-              if (equipName.length > 30 || equipName.includes('점검실시') || equipName.includes('비고') || equipName.includes('반기') || equipName.includes('결재')) {
-                equipName = ''; 
-              }
+              let pointStr = String(row[3] || '').trim().replace(/\s/g, '');
+              let axisStr = String(row[4] || '').toLowerCase().trim();
 
-              // 새 설비명 등장 시
-              if (equipName !== '' && equipName !== '설비명' && !String(row[3]).includes('측정위치')) {
-                if (currentEquip) parsedList.push(currentEquip);
+              // 하단 안내문구, 결재란, 비고란 등 실제 설비가 아닌 행 완벽 차단
+              const isGarbageName = equipName.length > 28 || 
+                                    equipName.includes('점검실시') || 
+                                    equipName.includes('업데이트') || 
+                                    equipName.includes('비고') || 
+                                    equipName === '반기' || 
+                                    equipName.includes('결재');
+
+              if (isGarbageName) continue;
+
+              // 측정위치 열(D열)에 전동기/펌프/송풍기/부하/1~4 숫자가 있는지 확인
+              const hasPointFormat = pointStr.includes('전동기') || pointStr.includes('펌프') || pointStr.includes('송풍기') || pointStr.includes('부하') || /^[1-4]/.test(pointStr);
+
+              // 새로운 설비명이 등장했고, 측정위치 포맷이 유효한 경우 새 설비 블록 시작
+              if (equipName !== '' && equipName !== '설비명' && hasPointFormat) {
+                if (currentEquip) parsedBySheet[sheetPeriod].push(currentEquip);
                 currentEquip = {
                   name: equipName,
                   period: sheetPeriod,
-                  power: parseFloat(row[2]) || 55,
+                  power: parseFloat(row[2]) || (currentEquip ? currentEquip.power : 55),
                   points: {
                     m_de: { h: 0, v: 0, a: 0 }, m_nde: { h: 0, v: 0, a: 0 },
                     p_de: { h: 0, v: 0, a: 0 }, p_nde: { h: 0, v: 0, a: 0 }
                   },
                   summary: '',
                   action: '',
-                  hasValidData: false // 진짜 측정 수치가 들어왔는지 판별하는 깐깐한 플래그
+                  isValidEquip: true // 미가동(진동값 빈칸)이어도 설비 대수에서 누락되지 않도록 보존!
                 };
               }
 
-              if (!currentEquip) continue;
+              if (!currentEquip || !hasPointFormat) continue;
 
-              let pointStr = String(row[3] || '').trim().replace(/\s/g, ''); 
-              let axisStr = String(row[4] || '').toLowerCase().trim();
               let rmsVal = parseFloat(row[5]);
               let causeStr = String(row[8] || '').trim();
               let actionStr = String(row[9] || '').trim();
 
-              if (!isNaN(rmsVal) && rmsVal > 0) {
+              // 비정상 오인식 숫자(날짜 시리얼 등 50 이상) 제외하고 정상 진동치만 반영
+              if (!isNaN(rmsVal) && rmsVal >= 0 && rmsVal < 50) {
                 let targetPoint = null;
                 if (pointStr.includes('전동기') && pointStr.includes('반부하')) targetPoint = currentEquip.points.m_nde;
                 else if (pointStr.includes('전동기')) targetPoint = currentEquip.points.m_de;
@@ -2723,76 +2586,95 @@ dashboard_html = r"""<!DOCTYPE html>
                   if (axisStr === 'x' || axisStr === 'h') targetPoint.h = Math.max(targetPoint.h, rmsVal);
                   if (axisStr === 'y' || axisStr === 'v') targetPoint.v = Math.max(targetPoint.v, rmsVal);
                   if (axisStr === 'z' || axisStr === 'a') targetPoint.a = Math.max(targetPoint.a, rmsVal);
-                  
-                  // 진동 수치가 정상적으로 하나라도 입력되었으므로 진짜 설비로 인정!
-                  currentEquip.hasValidData = true; 
                 }
               }
 
               if (causeStr && causeStr !== '-' && !currentEquip.summary.includes(causeStr)) {
                 currentEquip.summary += (currentEquip.summary ? ', ' : '') + causeStr;
               }
-              if (actionStr && actionStr !== '양호' && !currentEquip.action.includes(actionStr)) {
+              if (actionStr && actionStr !== '양호' && actionStr !== '-' && !currentEquip.action.includes(actionStr)) {
                 currentEquip.action += (currentEquip.action ? ', ' : '') + actionStr;
               }
             }
-            if (currentEquip) parsedList.push(currentEquip);
+            if (currentEquip && currentEquip.isValidEquip) {
+              parsedBySheet[sheetPeriod].push(currentEquip);
+            }
           }
 
-          // [핵심 필터] 유효한 진동 측정값이 전혀 없는 껍데기(안내문구 등) 데이터는 리스트에서 완전 삭제
-          parsedList = parsedList.filter(eq => eq.hasValidData);
+          const allPeriodsFound = Object.keys(parsedBySheet).filter(k => parsedBySheet[k].length > 0);
 
-          if (parsedList.length === 0) {
+          if (allPeriodsFound.length === 0) {
             statusBox.className = 'p-3 rounded-lg border text-xs bg-amber-950/20 border-amber-500/40 text-amber-400';
-            statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>인식 가능한 진동 데이터가 없습니다. 양식을 확인해 주세요.`;
+            statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>인식 가능한 설비 데이터가 없습니다.`;
             return;
           }
 
-          // 3. 추출 데이터 등록
-          parsedList.forEach((eq, idx) => {
-            let p = eq.points;
-            let maxRms = Math.max(p.m_de.h, p.m_de.v, p.m_de.a, p.m_nde.h, p.m_nde.v, p.m_nde.a, p.p_de.h, p.p_de.v, p.p_de.a, p.p_nde.h, p.p_nde.v, p.p_nde.a);
+          let summaryMsg = [];
 
-            const evalRes = calculateIsoGrade(eq.power, maxRms, 'rigid');
-            let historyObj = {};
-            historyObj[eq.period] = maxRms;
+          // 2. 시트별(상반기/하반기) 기존 중복 데이터를 깨끗이 비우고 새 데이터로 교체 등록
+          allPeriodsFound.forEach(pKey => {
+            const list = parsedBySheet[pKey];
+            // 해당 사업소 + 해당 시기의 기존 데이터를 지우고 새로 덮어씌움 (중복 뻥튀기 방지)
+            equipmentData = equipmentData.filter(e => !(e.office === uploadOffice && e.period === pKey));
 
-            equipmentData.unshift({
-              id: 'smart_' + Date.now() + '_' + idx,
-              period: eq.period,
-              office: currentOffice, 
-              name: eq.name,
-              power: eq.power,
-              group: evalRes.group,
-              foundation: 'rigid',
-              totalQty: 1,
-              overallGrade: evalRes.grade,
-              maxRms: maxRms,
-              points: eq.points,
-              axes: {
-                motor: { h: Math.max(p.m_de.h, p.m_nde.h), v: Math.max(p.m_de.v, p.m_nde.v), a: Math.max(p.m_de.a, p.m_nde.a) },
-                pump:  { h: Math.max(p.p_de.h, p.p_nde.h), v: Math.max(p.p_de.v, p.p_nde.v), a: Math.max(p.p_de.a, p.p_nde.a) }
-              },
-              history: historyObj,
-              summary: eq.summary || '측정 완료',
-              action: eq.action || '추세 관리',
-              detailNotes: '다중 시트 세로형 분석(AI 파싱)으로 등록됨'
+            list.forEach((eq, idx) => {
+              let p = eq.points;
+              let maxRms = Math.max(p.m_de.h, p.m_de.v, p.m_de.a, p.m_nde.h, p.m_nde.v, p.m_nde.a, p.p_de.h, p.p_de.v, p.p_de.a, p.p_nde.h, p.p_nde.v, p.p_nde.a);
+              const evalRes = calculateIsoGrade(eq.power, maxRms, 'rigid');
+
+              let historyObj = {};
+              historyObj[eq.period] = maxRms;
+
+              equipmentData.push({
+                id: 'smart_' + Date.now() + '_' + pKey + '_' + idx,
+                period: eq.period,
+                office: uploadOffice,
+                name: eq.name,
+                power: eq.power,
+                group: evalRes.group,
+                foundation: 'rigid',
+                totalQty: 1,
+                overallGrade: maxRms === 0 ? 'A' : evalRes.grade,
+                maxRms: maxRms,
+                points: eq.points,
+                axes: {
+                  motor: { h: Math.max(p.m_de.h, p.m_nde.h), v: Math.max(p.m_de.v, p.m_nde.v), a: Math.max(p.m_de.a, p.m_nde.a) },
+                  pump:  { h: Math.max(p.p_de.h, p.p_nde.h), v: Math.max(p.p_de.v, p.p_nde.v), a: Math.max(p.p_de.a, p.p_nde.a) }
+                },
+                history: historyObj,
+                summary: maxRms === 0 ? (eq.summary || '미가동 / 정비대기') : (eq.summary || '측정 완료'),
+                action: eq.action || '추세 관리',
+                detailNotes: '다중 시트 파싱 등록'
+              });
+            });
+
+            summaryMsg.push(`${pKey}: <strong>${list.length}대</strong>`);
+          });
+
+          // 반기별 추이선(Trend)을 위해 동일 설비명의 상/하반기 이력 상호 연결
+          equipmentData.forEach(item => {
+            if (!item.history) item.history = {};
+            equipmentData.forEach(other => {
+              if (other.office === item.office && other.name === item.name && other.maxRms > 0) {
+                item.history[other.period] = other.maxRms;
+              }
             });
           });
 
+          currentPeriod = allPeriodsFound[0];
           saveToLocalStorage();
           renderPeriodSelectors();
 
           statusBox.className = 'p-3 rounded-lg border text-xs bg-emerald-950/20 border-emerald-500/40 text-emerald-400 font-medium';
-          statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>상/하반기 다중 시트 파싱 완료! 총 <strong>${parsedList.length}건</strong>이 등록되었습니다!`;
+          statusBox.innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i>파싱 완료! (${summaryMsg.join(' / ')})`;
 
           updateDashboard();
-          setTimeout(() => { closeUploadModal(); }, 2500);
+          setTimeout(() => { closeUploadModal(); }, 2200);
 
         } catch (err) {
           console.error(err);
           statusBox.className = 'p-3 rounded-lg border text-xs bg-red-950/20 border-red-500/40 text-red-400';
-          statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>해독 오류: 세로형 양식이 아니거나 파일이 손상되었습니다.`;
+          statusBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>해독 오류: 파일 형식을 확인해 주세요.`;
         }
       };
 
