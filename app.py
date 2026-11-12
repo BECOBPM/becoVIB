@@ -516,33 +516,35 @@ dashboard_html = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- 18개 사업소 선택 바 & 측정시기 컨트롤 -->
-    <div class="max-w-7xl mx-auto mt-3 pt-3 border-t border-slate-700/60 flex flex-col gap-2">
-      <div class="flex items-center justify-between flex-wrap gap-2">
-        <div class="flex items-center gap-1.5 text-xs text-slate-300 font-semibold">
-          <i class="fa-solid fa-map-location-dot text-cyan-400"></i>
-          <span>사업소 선택 (18개소):</span>
+    <!-- 18개 사업소 선택 바 & 측정시기 컨트롤 (컴팩트 한 줄 레이아웃) -->
+    <div class="max-w-7xl mx-auto mt-3 pt-2.5 border-t border-slate-700/60 flex items-center justify-between flex-wrap gap-2">
+      <div class="flex items-center gap-2 flex-wrap">
+        <!-- 18개 사업소 드롭다운 선택기 -->
+        <div class="flex items-center gap-1.5 bg-slate-800 px-3 py-1.5 rounded-lg border border-cyan-500/40 shadow-sm">
+          <i class="fa-solid fa-building text-cyan-400 text-xs"></i>
+          <span class="text-xs text-slate-400 font-medium">사업소:</span>
+          <select id="headerOfficeSelect" onchange="switchOffice(this.value)" class="bg-slate-800 text-white text-xs font-extrabold focus:outline-none cursor-pointer pr-1"></select>
         </div>
 
-        <div class="flex items-center gap-2 text-xs flex-wrap">
-          <div class="flex items-center gap-1.5 bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700">
-            <span class="text-slate-400"><i class="fa-solid fa-clock-rotate-left text-cyan-400 mr-1"></i>측정 시기:</span>
-            <select id="periodFilterSelect" onchange="switchPeriod(this.value)" class="bg-transparent text-cyan-300 font-bold focus:outline-none cursor-pointer"></select>
-          </div>
-          <button onclick="openManagePeriodModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700 transition">
-            <i class="fa-regular fa-calendar-plus mr-1 text-cyan-400"></i>시기 관리
-          </button>
-          <button onclick="exportToCSV()" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 font-semibold px-2.5 py-1 rounded border border-slate-700 transition">
-            <i class="fa-solid fa-file-excel mr-1"></i>엑셀 내보내기
-          </button>
-          <button id="btnResetPeriod" onclick="resetCurrentSelectionData()" class="bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 px-2.5 py-1 rounded border border-slate-700 transition text-[11px] font-semibold">
-            <i class="fa-solid fa-eraser mr-1"></i>현재 사업소·시기 비우기(0)
-          </button>
-        </div>
+        <!-- 데이터가 등록된 활성 사업소만 자동으로 뜨는 빠른 탭 (스크롤 없음) -->
+        <div class="flex items-center gap-1.5 flex-wrap" id="officeTabs"></div>
       </div>
 
-      <!-- 18개 사업소 탭 스크롤 영역 -->
-      <div class="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pb-1.5 pt-0.5" id="officeTabs"></div>
+      <div class="flex items-center gap-2 text-xs flex-wrap">
+        <div class="flex items-center gap-1.5 bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-700">
+          <span class="text-slate-400"><i class="fa-solid fa-clock-rotate-left text-cyan-400 mr-1"></i>측정 시기:</span>
+          <select id="periodFilterSelect" onchange="switchPeriod(this.value)" class="bg-slate-800 text-cyan-300 font-bold focus:outline-none cursor-pointer"></select>
+        </div>
+        <button onclick="openManagePeriodModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1.5 rounded-lg border border-slate-700 transition">
+          <i class="fa-regular fa-calendar-plus mr-1 text-cyan-400"></i>시기 관리
+        </button>
+        <button onclick="exportToCSV()" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700 transition">
+          <i class="fa-solid fa-file-excel mr-1"></i>엑셀 내보내기
+        </button>
+        <button id="btnResetPeriod" onclick="resetCurrentSelectionData()" class="bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 px-2.5 py-1.5 rounded-lg border border-slate-700 transition text-[11px] font-semibold">
+          <i class="fa-solid fa-eraser mr-1"></i>현재 사업소·시기 비우기(0)
+        </button>
+      </div>
     </div>
   </header>
 
@@ -1143,28 +1145,41 @@ dashboard_html = r"""<!DOCTYPE html>
 
     function renderOfficeTabs() {
       const container = document.getElementById('officeTabs');
+      const headerSelect = document.getElementById('headerOfficeSelect');
       const dropdown = document.getElementById('officeFilterDropdown');
       const inpOff = document.getElementById('inpOffice');
       const upOff = document.getElementById('uploadOfficeSelect');
 
       const totalCountAll = equipmentData.filter(e => e.period === currentPeriod).length;
+
+      // 1) 상단 메인 드롭다운: 18개 전체 사업소 + 등록 대수 표시
+      let headerOpts = `<option value="ALL" ${currentOffice === 'ALL' ? 'selected' : ''}>전체 18개 사업소 (${totalCountAll}대)</option>`;
+      officeList.forEach(off => {
+        const cnt = equipmentData.filter(e => e.office === off.name && e.period === currentPeriod).length;
+        headerOpts += `<option value="${off.name}" ${currentOffice === off.name ? 'selected' : ''}>${off.name}${cnt > 0 ? ' (' + cnt + '대)' : ''}</option>`;
+      });
+      if (headerSelect) headerSelect.innerHTML = headerOpts;
+
+      // 2) 빠른 칩(Quick Chips): '전체' + 현재 데이터가 1건 이상 있거나 선택된 사업소만 깔끔하게 표시
       let tabsHtml = `
-        <button onclick="switchOffice('ALL')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition shrink-0 flex items-center gap-1.5 ${currentOffice === 'ALL' ? 'bg-cyan-600 text-white shadow' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">
-          <span>전체 사업소</span>
-          <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/60 text-cyan-300">${totalCountAll}</span>
+        <button onclick="switchOffice('ALL')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${currentOffice === 'ALL' ? 'bg-cyan-600 text-white shadow' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700 border border-slate-700'}">
+          <span>전체</span>
+          <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/60 text-cyan-300 font-mono">${totalCountAll}</span>
         </button>
       `;
 
       officeList.forEach(off => {
         const isSel = currentOffice === off.name;
         const cnt = equipmentData.filter(e => e.office === off.name && e.period === currentPeriod).length;
-        tabsHtml += `
-          <button onclick="switchOffice('${off.name}')" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 flex items-center gap-1.5 ${isSel ? 'bg-cyan-600 text-white shadow' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">
-            <i class="fa-solid ${off.icon} ${isSel ? 'text-white' : off.color}"></i>
-            <span>${off.name}</span>
-            ${cnt > 0 ? `<span class="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/70 text-emerald-300 font-mono">${cnt}</span>` : ''}
-          </button>
-        `;
+        if (cnt > 0 || isSel) {
+          tabsHtml += `
+            <button onclick="switchOffice('${off.name}')" class="px-2.5 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${isSel ? 'bg-cyan-600 text-white shadow' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700 border border-slate-700'}">
+              <i class="fa-solid ${off.icon} ${isSel ? 'text-white' : off.color}"></i>
+              <span>${off.name}</span>
+              <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/70 text-emerald-300 font-mono">${cnt}</span>
+            </button>
+          `;
+        }
       });
       container.innerHTML = tabsHtml;
 
